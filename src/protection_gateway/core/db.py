@@ -1,9 +1,9 @@
 """Durable SQLite metadata store.
 
 Holds IDs, hashes, states, bindings and storage references. Raw content,
-model output and evidence text live in the evidence store, not here (the
-only exceptions are user-authored simulated action arguments and review
-reasons, which belong to the user's own action/review records).
+model output, evidence text and simulated action arguments live in the
+evidence store. User-authored review reasons belong to the user's own
+review records.
 """
 
 from __future__ import annotations

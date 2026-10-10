@@ -45,7 +45,7 @@ class SimulatedMailboxExecutor:
             "INSERT INTO dummy_mailbox VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 action["effect_id"], action["action_id"], action["tenant_id"], action["owner_id"], arguments["to"],
-                arguments["subject"], sha256_hex(arguments["body"]), json.dumps(action["attachments"]), action["now"],
+                sha256_hex(arguments["subject"]), sha256_hex(arguments["body"]), json.dumps(action["attachments"]), action["now"],
             ),
         )
         return ExecutionOutcome.SUCCEEDED.value, action["effect_id"]
@@ -58,9 +58,14 @@ class ActionGate:
 
     # ------------------------------------------------------------ helpers
 
-    @staticmethod
-    def _digest_material(row: Mapping) -> dict:
-        arguments = json.loads(row["arguments_json"])
+    def _arguments(self, row: Mapping) -> dict:
+        ref = json.loads(row["arguments_json"]).get("storage_ref")
+        if not ref:
+            raise GatewayError(ErrorCode.CONTEXT_CHANGED, "action content expired")
+        return json.loads(self.s.store.get(ref, row["tenant_id"]))
+
+    def _digest_material(self, row: Mapping) -> dict:
+        arguments = self._arguments(row)
         return {
             "contract_version": CONTRACT_VERSION,
             "action_id": row["action_id"],
@@ -82,7 +87,7 @@ class ActionGate:
         }
 
     def _view(self, row) -> dict:
-        arguments = json.loads(row["arguments_json"])
+        arguments = self._arguments(row)
         view = {
             "action_id": row["action_id"],
             "state": row["state"],
@@ -173,7 +178,7 @@ class ActionGate:
             bindings = self.s._current_bindings(session)
             if bindings["context_hash"] != row["context_hash"] or session["scope_version"] != row["task_scope_version"]:
                 raise GatewayError(ErrorCode.CONTEXT_CHANGED, "context changed")
-            arguments = json.loads(row["arguments_json"])
+            arguments = self._arguments(row)
             attachments, label_ids, trust = self._derive(
                 principal, session, bindings, arguments, row["proposed_by_channel"] != Channel.USER_INTERFACE.value
             )
@@ -223,7 +228,9 @@ class ActionGate:
             "policy_id": policy.policy_id,
             "policy_hash": policy.policy_hash,
             "operation": SIMULATED_SEND_OPERATION,
-            "arguments_json": json.dumps(arguments, sort_keys=True),
+            "arguments_json": json.dumps({"storage_ref": self.s.store.put(
+                principal.tenant_id, "action", json.dumps(arguments, sort_keys=True).encode("utf-8")
+            )}),
             "attachments_json": json.dumps(attachments),
             "label_ids_json": json.dumps(label_ids),
             "recipient_trust": trust,
@@ -300,7 +307,7 @@ class ActionGate:
         if prior is not None:
             if prior["request_digest"] != request_digest:
                 raise GatewayError(ErrorCode.INVALID_REQUEST, "idempotency key reused")
-            return json.loads(prior["response_json"])
+            return self._view(row)
 
         state = row["state"]
         if state in (ActionState.PROPOSED.value, ActionState.EXECUTED.value):
@@ -339,7 +346,7 @@ class ActionGate:
                     "tenant_id": row["tenant_id"],
                     "owner_id": row["owner_id"],
                     "effect_id": effect_id,
-                    "arguments": json.loads(row["arguments_json"]),
+                    "arguments": self._arguments(row),
                     "attachments": json.loads(row["attachments_json"]),
                     "digest": row["digest"],
                     "now": iso(now),
@@ -359,7 +366,7 @@ class ActionGate:
             response = self._view(updated)
             conn.execute(
                 "INSERT INTO idempotency VALUES (?, ?, ?, ?, ?)",
-                (scope, idempotency_key, request_digest, json.dumps(response), iso(now)),
+                (scope, idempotency_key, request_digest, json.dumps({"action_id": action_id}), iso(now)),
             )
         return response
 
@@ -408,3 +415,27 @@ class ActionGate:
             "SELECT 1 FROM approvals a WHERE a.action_id = actions.action_id AND a.used_at IS NULL AND a.revoked_at IS NULL)",
             (ActionState.EXPIRED.value, now_iso, ActionState.CONFIRMED.value),
         )
+
+    def _purge_content(self, conn, row) -> None:
+        ref = json.loads(row["arguments_json"]).get("storage_ref")
+        if ref:
+            self.s.store.delete(ref, row["tenant_id"])
+            conn.execute("UPDATE actions SET arguments_json = ? WHERE action_id = ?",
+                         (json.dumps({"storage_ref": None}), row["action_id"]))
+
+    def purge_resource_actions(self, conn, tenant_id: str, label_id: str) -> None:
+        """Deleting a source also deletes its private derived action content."""
+        for row in conn.execute("SELECT * FROM actions WHERE tenant_id = ?", (tenant_id,)).fetchall():
+            if label_id in json.loads(row["label_ids_json"]):
+                self._purge_content(conn, row)
+                self._set_state(row["action_id"], ActionState.CANCELED)
+
+    def purge_retained_content(self, conn, evidence_cutoff: str, metadata_cutoff: str) -> None:
+        """Expire private action bytes with evidence, and action metadata after seven days."""
+        for row in conn.execute("SELECT * FROM actions WHERE created_at <= ?", (evidence_cutoff,)).fetchall():
+            self._purge_content(conn, row)
+        old_ids = [r["action_id"] for r in conn.execute("SELECT action_id FROM actions WHERE created_at <= ?", (metadata_cutoff,))]
+        for action_id in old_ids:
+            conn.execute("DELETE FROM approvals WHERE action_id = ?", (action_id,))
+            conn.execute("DELETE FROM dummy_mailbox WHERE action_id = ?", (action_id,))
+            conn.execute("DELETE FROM actions WHERE action_id = ?", (action_id,))

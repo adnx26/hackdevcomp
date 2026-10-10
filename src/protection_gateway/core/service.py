@@ -214,6 +214,7 @@ class GatewayService:
             conn.execute(
                 "UPDATE resources SET deleted_at = ?, storage_ref = NULL WHERE resource_id = ?", (now_iso, resource_id)
             )
+            self.actions.purge_resource_actions(conn, tenant, row["label_id"])
             for scan in affected:
                 self._purge_scan_content(conn, scan)
                 if scan["state"] in ACTIVE_JOB_STATES:
@@ -509,8 +510,10 @@ class GatewayService:
 
     def _new_token(self, conn, assignment_id: str, scan, worker_id: str) -> str:
         token = self.ids.secret()
+        assignment = conn.execute("SELECT lease_expires_at FROM assignments WHERE assignment_id = ?", (assignment_id,)).fetchone()
         expires = min(
-            after(self._now(), self.config.retention.job_token_seconds), parse_iso(scan["deadline_at"])
+            after(self._now(), self.config.retention.job_token_seconds), parse_iso(scan["deadline_at"]),
+            parse_iso(assignment["lease_expires_at"]),
         )
         conn.execute(
             "INSERT INTO job_tokens VALUES (?, ?, ?, ?, ?, ?, NULL)",
@@ -603,6 +606,13 @@ class GatewayService:
             for vs, ve, os_, oe in view["source_map"]:
                 if not (0 <= vs <= ve <= len(text) and 0 <= os_ <= oe <= resource["size_bytes"]):
                     return error
+            covered_to = 0
+            for vs, ve, _, _ in sorted(view["source_map"]):
+                if vs > covered_to:
+                    return error
+                covered_to = max(covered_to, ve)
+            if covered_to != len(text):
+                return error
             ref = self.store.put(scan["tenant_id"], "view", text.encode("utf-8"))
             map_ref = self.store.put(scan["tenant_id"], "sourcemap", _dumps(view["source_map"]).encode("utf-8"))
             views.append(
@@ -941,7 +951,10 @@ class GatewayService:
         )
         for view in _loads(ext["views_json"], []) if ext else []:
             if view["view_hash"] == view_hash and view.get("storage_ref"):
-                return self.store.get(view["storage_ref"], scan["tenant_id"]).decode("utf-8")
+                text = self.store.get(view["storage_ref"], scan["tenant_id"]).decode("utf-8")
+                if sha256_hex(text) != view_hash:
+                    raise GatewayError(ErrorCode.SERVICE_UNAVAILABLE, "stored view integrity failure", retryable=False)
+                return text
         return None
 
     def _verify_output_refs(self, scan, output: dict, hashes_by_resource: dict) -> bool:
@@ -967,7 +980,17 @@ class GatewayService:
             if "absent" in field:
                 continue
             spans = [check_ref(ref) for ref in field["source_refs"]]
-            if not any(_value_matches(name, field["value"], span) for span in spans):
+            if name == "amount":
+                # A citation cannot carve a smaller amount from inside a source number.
+                matches = any(
+                    ref["start"] <= token.start() and token.end() <= ref["end"]
+                    and Decimal(token.group().replace(",", "")) == Decimal(field["value"])
+                    for ref in field["source_refs"]
+                    for token in _AMOUNT_TOKEN.finditer(self._view_text(scan, ref["resource_id"], ref["view_hash"]))
+                )
+            else:
+                matches = any(_value_matches(name, field["value"], span) for span in spans)
+            if not matches:
                 mismatch = True
         return mismatch
 
@@ -1369,6 +1392,7 @@ class GatewayService:
     def get_inspected_result(self, principal: Principal, scan_id: str) -> dict:
         self._require_channel(principal, ALL_CHANNELS)
         self._owned("scans", "scan_id", scan_id, principal)
+        self._require_not_stopped()
         self._recover_scan(scan_id)
         scan = self._scan(scan_id)
         state = scan["state"]
@@ -1544,7 +1568,9 @@ class GatewayService:
         if row is None or row["revoked_at"] or parse_iso(row["expires_at"]) <= self._now():
             raise GatewayError(ErrorCode.UNAUTHENTICATED, "invalid capability")
         assignment = self.db.query_one("SELECT * FROM assignments WHERE assignment_id = ?", (row["assignment_id"],))
-        if assignment["worker_id"] != identity["worker_id"] or assignment["role"] != identity["role"]:
+        if assignment is None or assignment["state"] not in LIVE_ASSIGNMENT_STATES or parse_iso(assignment["lease_expires_at"]) <= self._now():
+            raise GatewayError(ErrorCode.FORBIDDEN, "assignment no longer live")
+        if any(assignment[key] != identity[key] for key in ("worker_id", "role", "build_version", "prompt_version")):
             raise GatewayError(ErrorCode.FORBIDDEN, "capability bound to another worker")
         scan = self._scan(row["scan_id"])
         if scan["state"] not in (JobState.EXTRACTING.value, JobState.INSPECTING.value):
@@ -1654,15 +1680,20 @@ class GatewayService:
                 conn.execute("DELETE FROM scans WHERE scan_id = ?", (scan_id,))
             counts["metadata_deleted"] = len(old)
             conn.execute("DELETE FROM resources WHERE deleted_at IS NOT NULL AND deleted_at <= ?", (meta_cutoff,))
+            conn.execute("DELETE FROM task_sessions WHERE expires_at <= ?", (meta_cutoff,))
+            conn.execute("DELETE FROM labels WHERE created_at <= ? AND NOT EXISTS ("
+                         "SELECT 1 FROM resources r WHERE r.resource_id = labels.source_resource_id)", (meta_cutoff,))
             conn.execute("DELETE FROM job_tokens WHERE expires_at <= ? OR revoked_at IS NOT NULL", (now_iso,))
             conn.execute("DELETE FROM browser_sessions WHERE expires_at <= ? OR revoked_at IS NOT NULL", (now_iso,))
             conn.execute("DELETE FROM seen_nonces WHERE seen_at <= ?", (meta_cutoff,))
             conn.execute("DELETE FROM idempotency WHERE created_at <= ?", (meta_cutoff,))
+            self.actions.purge_retained_content(conn, evidence_cutoff, meta_cutoff)
             self.actions.expire(conn, now_iso)
         return counts
 
 
 _CURRENCY_SYMBOLS = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY"}
+_AMOUNT_TOKEN = re.compile(r"(?<![\w.,])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w.]|,\d)")
 _DATE_FORMATS = ("%Y-%m-%d", "%d %B %Y", "%B %d, %Y", "%d %b %Y", "%b %d, %Y")
 
 
