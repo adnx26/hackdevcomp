@@ -67,8 +67,12 @@ class EvidenceStore:
         payload = self._cipher.encrypt(data) if self._cipher else data
         # O_EXCL: objects are immutable once written.
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(payload)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+        except BaseException:
+            os.unlink(path)
+            raise
         return ref
 
     def get(self, ref: str, tenant_id: str) -> bytes:

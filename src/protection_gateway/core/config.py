@@ -89,6 +89,7 @@ class GatewayConfig:
     evidence_volume_encrypted: bool = False
     allow_unencrypted_dev_storage: bool = False
     cookie_secure: bool = True
+    public_origin: str | None = None
     limits: Limits = field(default_factory=Limits)
     retention: Retention = field(default_factory=Retention)
 

@@ -50,6 +50,7 @@ class GatewayApp:
         # (method, pattern, handler, status, auth mode)
         self.routes: list[tuple[str, re.Pattern, Callable, int]] = [
             ("POST", re.compile(r"^/v1/session$"), self._login, 201),
+            ("GET", re.compile(r"^/v1/session$"), self._recover_session, 200),
             ("DELETE", re.compile(r"^/v1/session$"), self._logout, 200),
             ("POST", re.compile(r"^/v1/resources$"), lambda p, b, m, e: s.upload_resource(p, b), 201),
             ("DELETE", re.compile(rf"^/v1/resources/{_ID}$"), lambda p, b, m, e: s.delete_resource(p, m[0]), 200),
@@ -117,6 +118,9 @@ class GatewayApp:
     def _logout(self, principal, body, match, environ):
         raise AssertionError("handled specially")
 
+    def _recover_session(self, principal, body, match, environ):
+        raise AssertionError("handled specially")
+
     # ---------------------------------------------------------------- WSGI
 
     def __call__(self, environ, start_response) -> Iterable[bytes]:
@@ -135,6 +139,20 @@ class GatewayApp:
             if handler == self._login:
                 session = self.auth.issue_browser_session(self._bearer(environ))
                 headers.append(("Set-Cookie", self._session_cookie(session.cookie_value)))
+                data = {
+                    "user_id": session.principal.user_id,
+                    "csrf_token": session.csrf_token,
+                    "expires_at": session.expires_at,
+                }
+            elif handler == self._recover_session:
+                if "HTTP_AUTHORIZATION" in environ or environ.get("HTTP_X_PG_SESSION_RESUME") != "1":
+                    raise GatewayError(ErrorCode.FORBIDDEN, "session resume requires cookie and resume header")
+                origin = environ.get("HTTP_ORIGIN")
+                if (origin is not None and origin != self.service.config.public_origin) or environ.get(
+                    "HTTP_SEC_FETCH_SITE"
+                ) in ("cross-site", "same-site"):
+                    raise GatewayError(ErrorCode.FORBIDDEN, "off-origin session resume")
+                session = self.auth.recover_browser_session(self._cookie(environ))
                 data = {
                     "user_id": session.principal.user_id,
                     "csrf_token": session.csrf_token,
@@ -174,6 +192,8 @@ class GatewayApp:
             length = int(environ.get("CONTENT_LENGTH") or 0)
         except ValueError as exc:
             raise GatewayError(ErrorCode.INVALID_REQUEST, "bad content length") from exc
+        if length < 0:
+            raise GatewayError(ErrorCode.INVALID_REQUEST, "bad content length")
         if length > self.service.config.limits.max_request_bytes:
             raise GatewayError(ErrorCode.LIMIT_EXCEEDED, "request too large", retryable=False)
         if length == 0:

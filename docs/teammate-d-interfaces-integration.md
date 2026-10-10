@@ -77,3 +77,9 @@ Use a branch such as `codex/team-d-interfaces`. Merge after A, B, and C. Update 
 Your PR includes interface screenshots, exact adapter/integration/evaluation results, coverage limitations, safe launch instructions, and disabled capabilities. A reviews all authority/confirmation flows, B reviews broker/transport integration, and C reviews source/evidence consumption.
 
 Completion means the authenticated user journey works through the actual gateway and AGNTCY runtime, required release gates have evidence, error states stay honest, and the four-owner demo can be repeated. Do not enable real side effects because all four PRs merged; that requires the additional provider-specific gates in the master design.
+
+## 8. Reviewed A public/session contract
+
+Consume the exact [A v1 handoff additions](system-design.md#reviewed-a-v1-handoff-additions-october-10-2026), canonical schemas and generated fixtures. Recover reload sessions with cookie-only GET `/v1/session` plus `X-PG-Session-Resume: 1`, same-origin fetch and no Authorization header. Keep CSRF in memory; latest recovered token wins, no lifetime extension. A stale tab may recover and offer explicit retry; never automatically replay mutations after generic 403. B supplies configured public origin and same-origin transport.
+
+Use A's current `review.eligible` and optional digest, metadata-only status projection, exact preview/digest and source-label union. Render bounded `text_escaped` inertly; do not pass evidence into models. Task scope/context changes call A's seam and invalidate decisions/approvals. Resource deletion is UI/API only and supplies no assistant/MCP deletion tool. All channel/error/response fields follow the master. Add later D integration tests for recovery, header/origin rules, multi-tab rotation, expiry/revocation and protected confirmation. This amendment is A contract review, not proof that D's PR meets its design.

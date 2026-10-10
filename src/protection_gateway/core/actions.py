@@ -21,6 +21,7 @@ from ..contracts.enums import (
     ErrorCode,
     ExecutionOutcome,
     JobState,
+    PolicyCheck,
     RecipientTrust,
 )
 from ..contracts.errors import GatewayError
@@ -59,6 +60,18 @@ class ActionGate:
     # ------------------------------------------------------------ helpers
 
     def _arguments(self, row: Mapping) -> dict:
+        expiry = after(parse_iso(row["created_at"]), self.s.config.retention.evidence_seconds)
+        for label_id in json.loads(row["label_ids_json"]):
+            source = self.s.db.query_one(
+                "SELECT r.* FROM resources r JOIN labels l ON l.source_resource_id = r.resource_id "
+                "WHERE l.label_id = ? AND r.tenant_id = ? AND r.owner_id = ?",
+                (label_id, row["tenant_id"], row["owner_id"]),
+            )
+            if source is None or source["deleted_at"]:
+                raise GatewayError(ErrorCode.CONTEXT_CHANGED, "action source unavailable")
+            expiry = min(expiry, parse_iso(source["evidence_expires_at"]))
+        if self.s._now() >= expiry:
+            raise GatewayError(ErrorCode.CONTEXT_CHANGED, "action content expired")
         ref = json.loads(row["arguments_json"]).get("storage_ref")
         if not ref:
             raise GatewayError(ErrorCode.CONTEXT_CHANGED, "action content expired")
@@ -116,10 +129,12 @@ class ActionGate:
     def _allowed_scan_for(self, session, context_hash: str, resource_id: str):
         for scan in self.s.db.query_all(
             "SELECT * FROM scans WHERE task_session_id = ? AND tenant_id = ? AND state = ? AND decision = ? "
-            "AND context_hash = ? AND decision_expires_at > ?",
+            "AND context_hash = ? AND decision_expires_at > ? AND NOT EXISTS ("
+            "SELECT 1 FROM collector_events ce WHERE ce.scan_id = scans.scan_id "
+            "AND ce.effective_policy_check = ?)",
             (
                 session["task_session_id"], session["tenant_id"], JobState.DECIDED.value,
-                Decision.ALLOW_UNDER_POLICY.value, context_hash, self.s._now_iso(),
+                Decision.ALLOW_UNDER_POLICY.value, context_hash, self.s._now_iso(), PolicyCheck.FORBIDDEN.value,
             ),
         ):
             if resource_id in json.loads(scan["resource_ids_json"]):
@@ -146,8 +161,14 @@ class ActionGate:
             label_ids.add(labels[resource_id]["label_id"])
         if body_labeled:
             # Text produced outside the user's own interface may derive from
-            # session sources, so it carries every session label.
-            label_ids |= {labels[r]["label_id"] for r in session_resources if r in labels}
+            # session sources. Each source needs an active inspection as well
+            # as its label, even when the action has no attachments.
+            for resource_id in session_resources:
+                if resource_id not in labels or labels[resource_id]["deleted_at"]:
+                    raise GatewayError(ErrorCode.NOT_FOUND, "body source not in task session")
+                if self._allowed_scan_for(session, bindings["context_hash"], resource_id) is None:
+                    raise GatewayError(ErrorCode.FORBIDDEN, "body source lacks an active allowed inspection")
+                label_ids.add(labels[resource_id]["label_id"])
         trust = (
             RecipientTrust.TRUSTED_CONTACT.value
             if self.s.config.is_trusted_contact(principal.tenant_id, principal.user_id, arguments["to"])

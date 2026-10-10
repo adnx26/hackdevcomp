@@ -25,7 +25,7 @@
           "unsupported_parts": [
             {
               "media_type": "application/pdf",
-              "part_id": "attachment-1",
+              "part_id": "part_1",
               "reason": "UNSUPPORTED_FORMAT",
               "task_relevant": true
             }

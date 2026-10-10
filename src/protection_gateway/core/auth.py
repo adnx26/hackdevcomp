@@ -90,6 +90,29 @@ class Authenticator:
                 raise GatewayError(ErrorCode.FORBIDDEN, "csrf check failed")
         return Principal(row["user_id"], row["tenant_id"], Channel.USER_INTERFACE)
 
+    def recover_browser_session(self, cookie_value: str | None) -> BrowserSession:
+        """Recover a live browser session by rotating its in-memory CSRF token.
+
+        The cookie remains HttpOnly and the original expiry is preserved.
+        Validation and rotation share the transaction used by revocation.
+        """
+        if not cookie_value:
+            raise GatewayError(ErrorCode.UNAUTHENTICATED, "missing session")
+        session_hash = GatewayConfig.hash_token(cookie_value)
+        with self._db.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM browser_sessions WHERE session_hash = ?", (session_hash,)
+            ).fetchone()
+            if row is None or row["revoked_at"] or parse_iso(row["expires_at"]) <= self._clock.now():
+                raise GatewayError(ErrorCode.UNAUTHENTICATED, "invalid session")
+            csrf = self._ids.secret()
+            conn.execute(
+                "UPDATE browser_sessions SET csrf_hash = ? WHERE session_hash = ?",
+                (GatewayConfig.hash_token(csrf), session_hash),
+            )
+            principal = Principal(row["user_id"], row["tenant_id"], Channel.USER_INTERFACE)
+            return BrowserSession(cookie_value, csrf, principal, row["expires_at"])
+
     def revoke_browser_session(self, cookie_value: str) -> None:
         self._db.execute(
             "UPDATE browser_sessions SET revoked_at = ? WHERE session_hash = ?",

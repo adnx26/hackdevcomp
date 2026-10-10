@@ -16,6 +16,7 @@ from protection_gateway.contracts.enums import ErrorCode
 from protection_gateway.contracts.errors import GatewayError
 from protection_gateway.core.http import make_wsgi_app
 
+from tests.core.test_http import Client
 from tests.core.support import COLLECTOR, IDENTITIES, TOKENS, V, Harness
 
 FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -249,6 +250,8 @@ def build() -> dict[str, object]:
         "arguments": {"to": "carol@example.com", "subject": "Q3 report", "body": "Attached.", "attachment_resource_ids": [res["resource_id"]]}}}
     action = h.service.propose_simulated_action(ui, action_req)
     confirm_req = {"contract_version": V, "digest": action["digest"]}
+    out["examples/http_get_action.json"] = {"response_status":200,
+        "response":{"contract_version":V,"data":h.service.get_action(ui,action["action_id"])}}
     confirmed = h.service.confirm_simulated_action(ui, action["action_id"], confirm_req)
     executed = h.service.execute_simulated_action(ui, action["action_id"], {"contract_version": V}, "exec-0001")
     replay_same_key = h.service.execute_simulated_action(ui, action["action_id"], {"contract_version": V}, "exec-0001")
@@ -269,6 +272,34 @@ def build() -> dict[str, object]:
             "dummy_effects_recorded": len(h.service.db.query_all("SELECT * FROM dummy_mailbox")),
         },
     }
+    h.close()
+    # Shared v1 additions: actual HTTP success envelopes and session rotation.
+    h = Harness()
+    client = Client(make_wsgi_app(h.service, h.auth))
+    status, login, headers = client.call("POST", "/v1/session", bearer=TOKENS["alice"])
+    out["examples/http_post_session.json"] = {"auth":"human demo bearer (test credential only)",
+        "response_status":status,"response":login,"cookie_attributes":"HttpOnly; SameSite=Strict; Secure in HTTPS deployment"}
+    status, recovery, headers = client.call("GET", "/v1/session", headers={"X-PG-Session-Resume":"1"})
+    out["examples/http_get_session.json"] = {"auth":"existing cookie only; no Authorization header",
+        "headers":{"X-PG-Session-Resume":"1"},"response_status":status,"response":recovery,
+        "cache_control":headers["Cache-Control"],"expiry_extended":False}
+    csrf = recovery["data"]["csrf_token"]
+    res = h.upload(h.api())
+    ts = h.session(h.api(), [res["resource_id"]])
+    for rel, data in (
+        ("http_get_task_session.json",h.service.get_task_session(h.api(),ts["task_session_id"])),
+        ("service_advance_task_context.json",h.service.advance_task_context(h.api(),ts["task_session_id"])),
+    ):
+        out["examples/"+rel] = {"response_status":200,"response":{"contract_version":V,"data":data}}
+    update = {"contract_version":V,"resource_ids":[res["resource_id"]]}
+    out["examples/http_put_task_session_resources.json"] = {"request":update,"response_status":200,
+        "response":{"contract_version":V,"data":h.service.update_task_session(h.api(),ts["task_session_id"],update)}}
+    out["examples/http_post_task_session_cancel.json"] = {"request":{"contract_version":V},"response_status":200,
+        "response":{"contract_version":V,"data":h.service.cancel_task_session(h.api(),ts["task_session_id"])}}
+    out["examples/http_delete_resource.json"] = {"auth":"UI/API only","response_status":200,
+        "response":{"contract_version":V,"data":h.service.delete_resource(h.api(),res["resource_id"])}}
+    status, logout, _ = client.call("DELETE", "/v1/session",headers={"X-CSRF-Token":csrf})
+    out["examples/http_delete_session.json"] = {"auth":"cookie plus current CSRF","response_status":status,"response":logout}
     h.close()
     return out
 

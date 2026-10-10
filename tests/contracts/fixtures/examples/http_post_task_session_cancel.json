@@ -1,0 +1,29 @@
+{
+  "request": {
+    "contract_version": "v1"
+  },
+  "response": {
+    "contract_version": "v1",
+    "data": {
+      "active": false,
+      "context_version": 2,
+      "disclosure": [
+        {
+          "disclosure": "PRIVATE_TO_OWNER",
+          "label_id": "lbl_0005",
+          "resource_id": "res_0004"
+        }
+      ],
+      "expires_at": "2026-10-10T13:00:00Z",
+      "policy_hash": "5037744bfb4d3fe09f1c8be37ceba43b73a14d7ab4f090e4b1cac98d817b0b6e",
+      "policy_id": "extract_invoice",
+      "policy_version": "1",
+      "resource_ids": [
+        "res_0004"
+      ],
+      "task_scope_version": 2,
+      "task_session_id": "ts_0006"
+    }
+  },
+  "response_status": 200
+}

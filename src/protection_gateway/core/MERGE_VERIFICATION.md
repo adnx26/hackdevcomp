@@ -3,7 +3,8 @@
 Reviewed on October 10, 2026 against `docs/teammate-a-gateway.md` and the
 shared requirements in `docs/system-design.md`, especially sections 6–11
 and 15. Original PR head: `f43dcf8150a6aff018e4f8034cc74740ec75b428`.
-Only A-owned implementation, test, and handoff paths were changed.
+A-owned implementation/tests and reviewed shared design appendices were changed.
+No B/C/D implementation, root dependencies, deployment or CI paths changed.
 
 ## Reproduced failures repaired
 
@@ -47,8 +48,9 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:. python3 -m unittest discover -s tests
 git diff --check
 ```
 
-Results: **13 contract tests and 116 core tests pass**, including 14 added
-design regressions in `tests/core/test_design_merge_gates.py`. The original
+Results: **13 contract tests and 154 core tests pass**, including 52 added
+design and review regression tests. Five review regression modules cover
+runtime/retention, HTTP sessions, action authority, result release and status. The original
 13/102 suites passed despite the reproduced failures. These suites also pass
 with Python 3.12. Cancellation and
 task-context changes between validation and execution prevent effects via
@@ -67,28 +69,59 @@ the existing approval revocation; these regression checks also pass.
 | Unknown-outcome reconciliation without resend | action executor protocol and reconciliation; action suite | Deterministic pass; no real provider |
 | Evidence access, no raw public status/logs, encrypted-volume prerequisite, cleanup | evidence store/service and retention; privacy and new regression suites | Deterministic pass; deployment encryption verification remains B's responsibility |
 | Emergency controls withhold retrieval and revoke pending work | emergency and result paths; spec alignment and new regression suites | Deterministic pass |
-| Canonical fixture publication and actual B/D consumer review | committed fixture suite and handoff README | **Blocked: required reviews absent** |
-| Shared-contract additions proposed in master/affected assignment docs and reviewed | additions listed in core README only | **Blocked: shared baseline has not been updated/reviewed** |
-| Backup and immutable-log expiry defined together with B | core README explicitly says still to be agreed | **Blocked: agreement/evidence absent** |
+| Canonical fixture publication and actual B/D consumer review | committed fixture suite and handoff README | Independent B-facing review passed; final D review of remote head pending |
+| Shared-contract additions proposed in master/affected assignment docs and reviewed | master §15 and affected A/B/C/D appendices; generated canonical examples | Independent B/C-facing review passed; D final review pending |
+| Backup and immutable-log expiry defined together with B | core README explicitly says still to be agreed | Independent B-facing policy approval passed; B must verify deployment inventory before activation |
 
-## Required before merge
+## Additional independent review repairs
 
-1. B reviews the canonical assignment/capability/result/collector handoff,
-   including the stricter lease, source-map and private storage behavior.
-2. D reviews authentication/session/CSRF, public statuses and errors,
-   result/evidence disclosure, exact previews, confirmation and replay.
-3. Affected owners review the proposed contract additions already listed in
-   `core/README.md`; update the shared master and affected assignment documents
-   as required by system design section 15. This audit does not silently amend
-   that shared baseline or treat an implementation proposal as approval.
-4. A/B define backup and immutable-log expiry and record whether backups/log
-   exports exist in the chosen deployment. The core does not create backups;
-   its retention job is not proof of expiry for external copies or providers.
+- Extraction version must match the pinned assignment build; every view is
+  validated before allocation, and rejected/uncommitted objects are cleaned.
+  Late extraction terminates at deadline; periodic recovery handles a hung
+  extraction. Source/context changes cannot commit stale extraction objects.
+- Worker results recheck current lease, deadline and bindings inside their
+  persistence transaction; rejected staged artifacts and outputs are removed.
+- Result authorization and storage reads serialize with stop/quarantine;
+  committed forbidden collector evidence immediately blocks release/actions.
+  Body-derived actions require allowed inspection of every source, including
+  when attachment lists are empty. Signed currency values cannot be cited as
+  positive substrings.
+- Unsupported extraction status projects gateway IDs and fixed metadata
+  rather than worker diagnostic prose. Review eligibility uses current
+  bindings, expiry, evidence and stop; insertion rechecks these transactionally.
+- Negative Content-Length is rejected before reading. Cookie-only recovery
+  follows D's explicit header/origin/bearer rules; CSRF rotation and logout
+  serialize, original session expiry is preserved, and stale tokens have no
+  mutation effect.
+- Source and derived-content access expires independently of cleanup. Resource,
+  session and label metadata cleanup is anchored to creation, never deletion.
 
-No owner review, actual consumer compatibility, deployed encryption, live
-model, SLIM/host isolation, full workflow, or provider-retention pass is claimed.
-Those broader runtime/workflow gates belong to subsequent owners; A's required
-contract handoff and retention agreement must still be resolved first.
+## Review provenance and remaining gate
 
-**Do not merge A or advance to B until the blocked A requirements are resolved
-and the final remote head is reverified.**
+The independent B-facing runtime reviewer approved the exact amended master,
+A/B appendices, capability/result/collector handoff and retention proposal,
+then verified all 11 focused runtime regression tests. This is role review,
+not original B-author approval or deployed-host verification. The C-facing
+independent reviewer checks only A's extraction/source contract and C appendix,
+without verifying or advancing to C's implementation.
+
+The existing **Implement design doc D** chat reviewed A's public/authentication
+contract, reproduced four gaps and an exception-insertion race, and supplied
+an explicit conditional session recovery contract. Those fixes, fixtures and
+shared appendices are now concrete; final D approval is tied to the committed
+remote PR head and remains pending at this document revision.
+
+A/B define evidence ≤24 hours, metadata/logs ≤seven days from creation, no
+initial demo backups/snapshots/immutable exports, and original-expiry bounds
+for any later reviewed copies/restores. B must inventory and verify the actual
+host and copying/log settings before activation; local A tests do not prove
+host encryption, external-copy expiry or provider retention. Those deployment
+proofs belong to B's subsequent gate and cannot be waived.
+
+No original-author approval, actual later-PR consumer compatibility, deployed
+encryption, live model, SLIM/host isolation or full workflow pass is claimed.
+A's completion uses standard-library runtime doubles and fails closed without
+B; later PRs require independent verification after A lands.
+
+**Do not merge A or advance to B until final D review and verification of the
+remote A head pass.**

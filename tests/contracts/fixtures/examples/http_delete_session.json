@@ -1,0 +1,10 @@
+{
+  "auth": "cookie plus current CSRF",
+  "response": {
+    "contract_version": "v1",
+    "data": {
+      "signed_out": true
+    }
+  },
+  "response_status": 200
+}

@@ -15,8 +15,8 @@ Once B's root package setup lands, switch to B's agreed environment and test
 command.
 
 The merge verification repairs missed design requirements and passes 13
-contract / 116 core tests. Required B/D contract review, shared baseline
-updates, and the A/B backup/log expiry agreement remain outstanding. See
+contract / 154 core tests. Shared baseline updates and the A/B retention policy now have independent
+role review; final D review of the committed remote head remains pending. See
 [the requirement checklist and evidence](MERGE_VERIFICATION.md); passing
 local tests alone is not permission to merge.
 
@@ -44,7 +44,7 @@ service.recover(startup=True)   # interrupted extractions fail closed
   one per assignment by calling `service.issue_job_capability(assignment_id)`
   and passes it to the worker privately; it never travels in an assignment
   message. Re-issuing revokes the previous token. Tokens expire at the
-  earlier of 5 minutes or the scan deadline, are revoked on completion,
+  earliest of 5 minutes, assignment lease or scan deadline, are revoked on completion,
   cancel, decision, failure or emergency stop, and only their hashes are
   stored. Workers read inputs through
   `service.read_assigned_original(capability, identity, resource_id)` for
@@ -71,6 +71,12 @@ service.recover(startup=True)   # interrupted extractions fail closed
 - `POST /v1/session` with `Authorization: Bearer <demo token>` returns an
   HttpOnly `SameSite=Strict` cookie plus a `csrf_token`. Every cookie-based
   mutation needs an `X-CSRF-Token` header. `DELETE /v1/session` signs out.
+- `GET /v1/session` recovers a live cookie after reload, rotating CSRF without
+  extending expiry. Send `X-PG-Session-Resume: 1`, with no Authorization header.
+  Supplied Origin must match `config.public_origin`; same-site/cross-site
+  Fetch Metadata is rejected. B configures same-origin composition. The
+  latest token wins across tabs; offer explicit retry after recovery, never
+  automatically replay a failed mutation. Tokens remain in memory.
 - Bearer requests use the `API` channel. D's MCP adapter calls
   `auth.authenticate_bearer(token, Channel.MCP)`, and D's chat adapter uses
   `principal.as_assistant()`. Service methods enforce channel rules
@@ -94,11 +100,13 @@ service.recover(startup=True)   # interrupted extractions fail closed
   `FORBIDDEN`, 404 `NOT_FOUND`, 409 `NOT_READY` / `CONTEXT_CHANGED`, 428
   `APPROVAL_REQUIRED`, 429 `LIMIT_EXCEEDED`, 503 `SERVICE_UNAVAILABLE`.
 
-## Proposed contract additions (need B/D review)
+## Shared v1 handoff additions
 
-These endpoints and fields are in addition to the §15 table:
+The exact shared baseline now specifies these additions in system-design §15
+and the affected A/B/C/D assignment appendices. Review provenance and remaining
+gates are in MERGE_VERIFICATION.md:
 
-- `POST/DELETE /v1/session`: the demo browser-session exchange.
+- `POST/GET/DELETE /v1/session`: the demo browser-session exchange.
 - `GET /v1/task-sessions/{id}`, `PUT /v1/task-sessions/{id}/resources`
   (creates a new scope version), and `POST /v1/task-sessions/{id}/cancel`.
 - `DELETE /v1/resources/{id}`: deletes the stored bytes and derived
@@ -136,6 +144,7 @@ lifts the stop.
   simulated executor never produces that state.
 - There is no extraction or parsing in this process. That is C's code,
   launched by B.
-- Backups and immutable logs are outside this module. B and A still need to
-  agree on their expiry, and nothing here promises immediate deletion from
-  them.
+- Backups and immutable logs are outside this module. The reviewed demo policy disables backups/snapshots/immutable exports,
+  expires operational logs within seven days, and requires B to verify the
+  deployed copy/log inventory before activation. Later copies and restore
+  handling follow the master retention policy; no instant erasure is promised.

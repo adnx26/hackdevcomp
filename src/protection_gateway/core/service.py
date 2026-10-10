@@ -261,8 +261,8 @@ class GatewayService:
         rows = []
         for resource_id in resource_ids:
             row = self._owned("resources", "resource_id", resource_id, principal)
-            if row["deleted_at"]:
-                raise GatewayError(ErrorCode.NOT_FOUND, "resource deleted")
+            if row["deleted_at"] or parse_iso(row["evidence_expires_at"]) <= self._now():
+                raise GatewayError(ErrorCode.NOT_FOUND, "resource expired")
             rows.append(row)
         if len(rows) > self.config.limits.max_task_sources:
             raise GatewayError(ErrorCode.LIMIT_EXCEEDED, "too many sources", retryable=False)
@@ -407,7 +407,7 @@ class GatewayService:
                 "SELECT * FROM resources WHERE resource_id = ? AND tenant_id = ? AND owner_id = ?",
                 (resource_id, session_row["tenant_id"], session_row["owner_id"]),
             )
-            if row is None or row["deleted_at"]:
+            if row is None or row["deleted_at"] or parse_iso(row["evidence_expires_at"]) <= self._now():
                 raise GatewayError(ErrorCode.CONTEXT_CHANGED, "resource unavailable")
             rows.append(row)
         return self._bindings(session_row, rows)
@@ -571,12 +571,35 @@ class GatewayService:
                         (assignment_id,),
                     )
             status, version, views, unsupported = self._accept_extraction(scan, resource, assignment, raw)
-            with self.db.transaction() as conn:
-                conn.execute(
-                    "INSERT INTO extractions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (scan_id, resource_id, assignment_id, status, version, _dumps(views), _dumps(unsupported), self._now_iso()),
-                )
-                self._event(conn, scan_id, scan["tenant_id"], "EXTRACTED", resource_id=resource_id, status=status)
+            committed = False
+            try:
+                with self.db.transaction() as conn:
+                    current = conn.execute("SELECT * FROM scans WHERE scan_id = ?", (scan_id,)).fetchone()
+                    if current["state"] != JobState.EXTRACTING.value:
+                        return
+                    if self._now() >= parse_iso(current["deadline_at"]):
+                        self._terminate(conn, current, JobState.FAILED, [ReasonCode.TIMEOUT.value])
+                        return
+                    session = conn.execute("SELECT * FROM task_sessions WHERE task_session_id = ?",
+                                           (current["task_session_id"],)).fetchone()
+                    try:
+                        bound_context = self._current_bindings(session)["context_hash"]
+                    except GatewayError:
+                        bound_context = None
+                    if bound_context != current["context_hash"]:
+                        self._terminate(conn, current, JobState.FAILED, [ReasonCode.INTERRUPTED.value])
+                        return
+                    conn.execute(
+                        "INSERT INTO extractions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (scan_id, resource_id, assignment_id, status, version, _dumps(views), _dumps(unsupported), self._now_iso()),
+                    )
+                    self._event(conn, scan_id, scan["tenant_id"], "EXTRACTED", resource_id=resource_id, status=status)
+                committed = True
+            finally:
+                if not committed:
+                    for view in views:
+                        self.store.delete(view["storage_ref"], scan["tenant_id"])
+                        self.store.delete(view["source_map_ref"], scan["tenant_id"])
 
         outcome = self._evaluate(scan_id)
         if outcome.decision is not None:
@@ -595,6 +618,10 @@ class GatewayService:
             result["assignment_id"] != assignment["assignment_id"]
             or result["resource_id"] != resource["resource_id"]
             or result["original_hash"] != resource["original_hash"]
+            or result["extractor_version"] != self.db.query_one(
+                "SELECT build_version FROM assignments WHERE assignment_id = ?",
+                (assignment["assignment_id"],),
+            )["build_version"]
         ):
             return error
         views, seen = [], set()
@@ -613,22 +640,31 @@ class GatewayService:
                 covered_to = max(covered_to, ve)
             if covered_to != len(text):
                 return error
-            ref = self.store.put(scan["tenant_id"], "view", text.encode("utf-8"))
-            map_ref = self.store.put(scan["tenant_id"], "sourcemap", _dumps(view["source_map"]).encode("utf-8"))
-            views.append(
-                {
-                    "view_id": view["view_id"],
-                    "kind": view["kind"],
-                    "view_hash": view["view_hash"],
-                    "length": len(text),
-                    "storage_ref": ref,
-                    "source_map_ref": map_ref,
-                }
-            )
+        # Validate every view before allocating any private objects.
+        staged = []
+        try:
+            for view in result["views"]:
+                ref = self.store.put(scan["tenant_id"], "view", view["text"].encode("utf-8"))
+                staged.append(ref)
+                map_ref = self.store.put(scan["tenant_id"], "sourcemap", _dumps(view["source_map"]).encode("utf-8"))
+                staged.append(map_ref)
+                views.append({"view_id": view["view_id"], "kind": view["kind"],
+                              "view_hash": view["view_hash"], "length": len(view["text"]),
+                              "storage_ref": ref, "source_map_ref": map_ref})
+        except BaseException:
+            for ref in staged:
+                self.store.delete(ref, scan["tenant_id"])
+            raise
         status = result["status"]
         if status == ExtractionStatus.COMPLETE.value and not views:
             status = ExtractionStatus.INCOMPLETE.value
-        unsupported = [dict(p, resource_id=resource["resource_id"]) for p in result["unsupported_parts"]]
+        unsupported = [
+            {"resource_id": resource["resource_id"], "part_id": f"part_{i + 1}",
+             "media_type": part["media_type"] if part["media_type"] in _PUBLIC_MEDIA_TYPES else "application/octet-stream",
+             "task_relevant": part["task_relevant"],
+             "reason": part["reason"] if part["reason"] in _PUBLIC_UNSUPPORTED_REASONS else "UNSUPPORTED_CONTENT"}
+            for i, part in enumerate(result["unsupported_parts"])
+        ]
         return status, result["extractor_version"], views, unsupported
 
     def _dispatch(self, scan_id: str, roles: list[str]) -> None:
@@ -812,7 +848,7 @@ class GatewayService:
         if scan["state"] != JobState.INSPECTING.value:
             raise GatewayError(ErrorCode.CONTEXT_CHANGED, "scan not inspecting")
         now = self._now()
-        if now > parse_iso(assignment["lease_expires_at"]) or now > parse_iso(scan["deadline_at"]):
+        if now >= parse_iso(assignment["lease_expires_at"]) or now >= parse_iso(scan["deadline_at"]):
             raise GatewayError(ErrorCode.CONTEXT_CHANGED, "lease expired")
 
         expected = _loads(assignment["assignment_json"])
@@ -887,61 +923,75 @@ class GatewayService:
                 schemas.validate_invoice_values(output)
             answer_mismatch = self._verify_output_refs(scan, output, hashes_by_resource)
 
-        # Persist. Re-check state inside the write transaction.
-        stored_artifacts = [
-            (a, self.store.put(scan["tenant_id"], "artifact", a["text"].encode("utf-8"))) for a in artifacts
-        ]
-        output_ref = (
-            self.store.put(scan["tenant_id"], "taskoutput", _dumps(output).encode("utf-8")) if output is not None else None
-        )
-        now_iso = iso(now)
-        evidence_expiry = iso(after(now, self.config.retention.evidence_seconds))
-        with self.db.transaction() as conn:
-            current = conn.execute(
-                "SELECT a.state AS a_state, s.state AS s_state FROM assignments a JOIN scans s ON s.scan_id = a.scan_id "
-                "WHERE a.assignment_id = ?",
-                (assignment["assignment_id"],),
-            ).fetchone()
-            if current["a_state"] not in LIVE_ASSIGNMENT_STATES or current["s_state"] != JobState.INSPECTING.value:
-                raise GatewayError(ErrorCode.CONTEXT_CHANGED, "assignment no longer live")
-            evidence_map = {}
-            for artifact, ref in stored_artifacts:
-                evidence_id = self.ids.new("ev")
-                evidence_map[artifact["artifact_id"]] = evidence_id
+        # Stage immutable objects, then revalidate authority at commit time.
+        stored_artifacts, staged = [], []
+        output_ref = None
+        try:
+            for artifact in artifacts:
+                ref = self.store.put(scan["tenant_id"], "artifact", artifact["text"].encode("utf-8"))
+                staged.append(ref)
+                stored_artifacts.append((artifact, ref))
+            if output is not None:
+                output_ref = self.store.put(scan["tenant_id"], "taskoutput", _dumps(output).encode("utf-8"))
+                staged.append(output_ref)
+            with self.db.transaction() as conn:
+                current = conn.execute(
+                    "SELECT a.state AS a_state, a.lease_expires_at, s.state AS s_state, s.deadline_at FROM assignments a JOIN scans s ON s.scan_id = a.scan_id "
+                    "WHERE a.assignment_id = ?",
+                    (assignment["assignment_id"],),
+                ).fetchone()
+                if current["a_state"] not in LIVE_ASSIGNMENT_STATES or current["s_state"] != JobState.INSPECTING.value:
+                    raise GatewayError(ErrorCode.CONTEXT_CHANGED, "assignment no longer live")
+                now = self._now()
+                if now >= parse_iso(current["lease_expires_at"]) or now >= parse_iso(current["deadline_at"]):
+                    raise GatewayError(ErrorCode.CONTEXT_CHANGED, "lease expired")
+                session = conn.execute("SELECT * FROM task_sessions WHERE task_session_id = ?", (scan["task_session_id"],)).fetchone()
+                if self._current_bindings(session)["context_hash"] != scan["context_hash"]:
+                    raise GatewayError(ErrorCode.CONTEXT_CHANGED, "bindings changed")
+                now_iso = iso(now)
+                evidence_expiry = iso(min(after(now, self.config.retention.evidence_seconds), self._source_expiry(scan)))
+                evidence_map = {}
+                for artifact, ref in stored_artifacts:
+                    evidence_id = self.ids.new("ev")
+                    evidence_map[artifact["artifact_id"]] = evidence_id
+                    conn.execute(
+                        "INSERT INTO evidence VALUES (?, ?, ?, ?, ?, 'WORKER_ARTIFACT', ?, NULL, ?, ?, NULL)",
+                        (evidence_id, scan["scan_id"], scan["tenant_id"], scan["owner_id"], artifact["kind"], ref, now_iso, evidence_expiry),
+                    )
+                for event_id, event in events.items():
+                    evidence_map.setdefault(event_id, event["evidence_id"])
+                findings = [
+                    {
+                        "category": f["category"],
+                        "resource_id": f["resource_id"],
+                        "view_hash": f["view_hash"],
+                        **({"span": f["span"]} if "span" in f else {}),
+                        "evidence_ids": [evidence_map[e] for e in f["evidence_ids"]],
+                    }
+                    for f in result["findings"]
+                ]
                 conn.execute(
-                    "INSERT INTO evidence VALUES (?, ?, ?, ?, ?, 'WORKER_ARTIFACT', ?, NULL, ?, ?, NULL)",
-                    (evidence_id, scan["scan_id"], scan["tenant_id"], scan["owner_id"], artifact["kind"], ref, now_iso, evidence_expiry),
+                    "INSERT INTO worker_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        assignment["assignment_id"], scan["scan_id"], role, result["nonce"], digest,
+                        result["inspection_status"], _dumps(findings), _dumps(result.get("telemetry_event_ids", [])),
+                        output_ref, _dumps(result.get("coverage_limits", [])), int(answer_mismatch), now_iso,
+                    ),
                 )
-            for event_id, event in events.items():
-                evidence_map.setdefault(event_id, event["evidence_id"])
-            findings = [
-                {
-                    "category": f["category"],
-                    "resource_id": f["resource_id"],
-                    "view_hash": f["view_hash"],
-                    **({"span": f["span"]} if "span" in f else {}),
-                    "evidence_ids": [evidence_map[e] for e in f["evidence_ids"]],
-                }
-                for f in result["findings"]
-            ]
-            conn.execute(
-                "INSERT INTO worker_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    assignment["assignment_id"], scan["scan_id"], role, result["nonce"], digest,
-                    result["inspection_status"], _dumps(findings), _dumps(result.get("telemetry_event_ids", [])),
-                    output_ref, _dumps(result.get("coverage_limits", [])), int(answer_mismatch), now_iso,
-                ),
-            )
-            conn.execute("INSERT INTO seen_nonces VALUES (?, ?, ?, ?)", (result["nonce"], assignment["assignment_id"], digest, now_iso))
-            conn.execute("UPDATE assignments SET state = 'COMPLETED' WHERE assignment_id = ?", (assignment["assignment_id"],))
-            conn.execute(
-                "UPDATE job_tokens SET revoked_at = ? WHERE assignment_id = ? AND revoked_at IS NULL",
-                (now_iso, assignment["assignment_id"]),
-            )
-            self._event(
-                conn, scan["scan_id"], scan["tenant_id"], "RESULT_ACCEPTED",
-                assignment_id=assignment["assignment_id"], role=role, status=result["inspection_status"],
-            )
+                conn.execute("INSERT INTO seen_nonces VALUES (?, ?, ?, ?)", (result["nonce"], assignment["assignment_id"], digest, now_iso))
+                conn.execute("UPDATE assignments SET state = 'COMPLETED' WHERE assignment_id = ?", (assignment["assignment_id"],))
+                conn.execute(
+                    "UPDATE job_tokens SET revoked_at = ? WHERE assignment_id = ? AND revoked_at IS NULL",
+                    (now_iso, assignment["assignment_id"]),
+                )
+                self._event(
+                    conn, scan["scan_id"], scan["tenant_id"], "RESULT_ACCEPTED",
+                    assignment_id=assignment["assignment_id"], role=role, status=result["inspection_status"],
+                )
+        except BaseException:
+            for ref in staged:
+                self.store.delete(ref, scan["tenant_id"])
+            raise
         self._try_decide(scan["scan_id"])
         return {"status": "ACCEPTED", "assignment_id": assignment["assignment_id"]}
 
@@ -984,7 +1034,7 @@ class GatewayService:
                 # A citation cannot carve a smaller amount from inside a source number.
                 matches = any(
                     ref["start"] <= token.start() and token.end() <= ref["end"]
-                    and Decimal(token.group().replace(",", "")) == Decimal(field["value"])
+                    and Decimal((token.group("sign_before") or token.group("sign_after") or "") + token.group("number").replace(",", "")) == Decimal(field["value"])
                     for ref in field["source_refs"]
                     for token in _AMOUNT_TOKEN.finditer(self._view_text(scan, ref["resource_id"], ref["view_hash"]))
                 )
@@ -1158,7 +1208,7 @@ class GatewayService:
                 "decision_record_json = ? WHERE scan_id = ?",
                 (
                     outcome.decision.value, _dumps(list(outcome.reason_codes)), iso(now),
-                    iso(after(now, self.config.retention.decision_seconds)),
+                    iso(min(after(now, self.config.retention.decision_seconds), self._source_expiry(scan))),
                     _dumps(self._decision_record(conn, scan, outcome.decision.value)), scan_id,
                 ),
             )
@@ -1257,7 +1307,13 @@ class GatewayService:
 
     def _recover_scan(self, scan_id: str) -> None:
         scan = self._scan(scan_id)
-        if scan is None or scan["state"] != JobState.INSPECTING.value:
+        if scan is None:
+            return
+        if scan["state"] in (JobState.QUEUED.value, JobState.EXTRACTING.value):
+            if self._now() >= parse_iso(scan["deadline_at"]):
+                self._fail(scan_id, ReasonCode.TIMEOUT)
+            return
+        if scan["state"] != JobState.INSPECTING.value:
             return
         now = self._now()
         deadline = parse_iso(scan["deadline_at"])
@@ -1302,6 +1358,8 @@ class GatewayService:
             if row["state"] in (JobState.QUEUED.value, JobState.EXTRACTING.value):
                 if startup:
                     self._fail(row["scan_id"], ReasonCode.INTERRUPTED)
+                else:
+                    self._recover_scan(row["scan_id"])
             else:
                 self._recover_scan(row["scan_id"])
 
@@ -1325,6 +1383,12 @@ class GatewayService:
             and review_exception_eligible(scan["decision"], reasons)
             and output is not None
         )
+        if eligible:
+            try:
+                self._require_not_stopped()
+                self._check_scan_bindings(scan)
+            except GatewayError:
+                eligible = False
         status = {
             "scan_id": scan_id,
             "task_session_id": scan["task_session_id"],
@@ -1370,7 +1434,24 @@ class GatewayService:
         }
         return status
 
+    def _source_expiry(self, scan):
+        expiries = []
+        for rid in _loads(scan["resource_ids_json"]):
+            row = self.db.query_one(
+                "SELECT * FROM resources WHERE resource_id = ? AND tenant_id = ? AND owner_id = ?",
+                (rid, scan["tenant_id"], scan["owner_id"]),
+            )
+            if row is None or row["deleted_at"] or parse_iso(row["evidence_expires_at"]) <= self._now():
+                raise GatewayError(ErrorCode.CONTEXT_CHANGED, "source expired")
+            expiries.append(parse_iso(row["evidence_expires_at"]))
+        return min(expiries)
+
     def _check_scan_bindings(self, scan) -> None:
+        if self.db.query_one(
+            "SELECT 1 FROM collector_events WHERE scan_id = ? AND effective_policy_check = 'FORBIDDEN' LIMIT 1",
+            (scan["scan_id"],),
+        ):
+            raise GatewayError(ErrorCode.FORBIDDEN, "forbidden collector evidence")
         session = self.db.query_one("SELECT * FROM task_sessions WHERE task_session_id = ?", (scan["task_session_id"],))
         current = self._current_bindings(session)
         if (
@@ -1394,47 +1475,49 @@ class GatewayService:
         self._owned("scans", "scan_id", scan_id, principal)
         self._require_not_stopped()
         self._recover_scan(scan_id)
-        scan = self._scan(scan_id)
-        state = scan["state"]
-        if state in (JobState.QUEUED.value, JobState.EXTRACTING.value, JobState.INSPECTING.value):
-            raise GatewayError(ErrorCode.NOT_READY, "inspection incomplete")
-        if state != JobState.DECIDED.value:
-            raise GatewayError(ErrorCode.FORBIDDEN, "scan failed or canceled", retryable=False)
-        if scan["decision"] == Decision.QUARANTINE.value:
-            raise GatewayError(ErrorCode.FORBIDDEN, "quarantined")
-        self._check_scan_bindings(scan)
-        output = self.db.query_one("SELECT * FROM outputs WHERE scan_id = ? AND deleted_at IS NULL", (scan_id,))
-        if scan["decision"] == Decision.ALLOW_UNDER_POLICY.value:
-            basis, exception = "ALLOW_UNDER_POLICY", None
-        else:
-            exception = output and self._active_exception(scan, principal.user_id, output["output_digest"])
-            if not exception:
-                raise GatewayError(ErrorCode.APPROVAL_REQUIRED, "review pending", retryable=False)
-            basis = "REVIEW_EXCEPTION"
-        if output is None or not output["storage_ref"]:
-            raise GatewayError(ErrorCode.CONTEXT_CHANGED, "output unavailable")
-        payload = self.store.get(output["storage_ref"], scan["tenant_id"])
-        content = json.loads(payload)
-        if canonical_digest(content) != output["output_digest"]:
-            raise GatewayError(ErrorCode.SERVICE_UNAVAILABLE, "output integrity check failed", retryable=False)
-        labels = [
-            {"label_id": r["label_id"], "disclosure": r["disclosure"]}
-            for r in self.db.query_all(
-                "SELECT label_id, disclosure FROM labels WHERE tenant_id = ? ORDER BY label_id", (scan["tenant_id"],)
-            )
-            if r["label_id"] in content["label_ids"]
-        ]
-        expires = scan["decision_expires_at"] if exception is None else min(scan["decision_expires_at"], exception["expires_at"])
-        return {
-            "scan_id": scan_id,
-            "decision": scan["decision"],
-            "release_basis": basis,
-            "read_only": True,
-            "result_digest": output["output_digest"],
-            "expires_at": expires,
-            "labels": labels,
-            "result": content,
-        }
+        with self.db.transaction():
+            self._require_not_stopped()
+            scan = self._scan(scan_id)
+            state = scan["state"]
+            if state in (JobState.QUEUED.value, JobState.EXTRACTING.value, JobState.INSPECTING.value):
+                raise GatewayError(ErrorCode.NOT_READY, "inspection incomplete")
+            if state != JobState.DECIDED.value:
+                raise GatewayError(ErrorCode.FORBIDDEN, "scan failed or canceled", retryable=False)
+            if scan["decision"] == Decision.QUARANTINE.value:
+                raise GatewayError(ErrorCode.FORBIDDEN, "quarantined")
+            self._check_scan_bindings(scan)
+            output = self.db.query_one("SELECT * FROM outputs WHERE scan_id = ? AND deleted_at IS NULL", (scan_id,))
+            if scan["decision"] == Decision.ALLOW_UNDER_POLICY.value:
+                basis, exception = "ALLOW_UNDER_POLICY", None
+            else:
+                exception = output and self._active_exception(scan, principal.user_id, output["output_digest"])
+                if not exception:
+                    raise GatewayError(ErrorCode.APPROVAL_REQUIRED, "review pending", retryable=False)
+                basis = "REVIEW_EXCEPTION"
+            if output is None or not output["storage_ref"]:
+                raise GatewayError(ErrorCode.CONTEXT_CHANGED, "output unavailable")
+            payload = self.store.get(output["storage_ref"], scan["tenant_id"])
+            content = json.loads(payload)
+            if canonical_digest(content) != output["output_digest"]:
+                raise GatewayError(ErrorCode.SERVICE_UNAVAILABLE, "output integrity check failed", retryable=False)
+            labels = [
+                {"label_id": r["label_id"], "disclosure": r["disclosure"]}
+                for r in self.db.query_all(
+                    "SELECT label_id, disclosure FROM labels WHERE tenant_id = ? ORDER BY label_id", (scan["tenant_id"],)
+                )
+                if r["label_id"] in content["label_ids"]
+            ]
+            expires = scan["decision_expires_at"] if exception is None else min(scan["decision_expires_at"], exception["expires_at"])
+            return {
+                "scan_id": scan_id,
+                "decision": scan["decision"],
+                "release_basis": basis,
+                "read_only": True,
+                "result_digest": output["output_digest"],
+                "expires_at": expires,
+                "labels": labels,
+                "result": content,
+            }
 
     def cancel_scan(self, principal: Principal, scan_id: str) -> dict:
         self._require_channel(principal, WRITE_CHANNELS)
@@ -1474,6 +1557,19 @@ class GatewayService:
         )
         exception_id = self.ids.new("rx")
         with self.db.transaction() as conn:
+            self._require_not_stopped()
+            scan = conn.execute("SELECT * FROM scans WHERE scan_id = ?", (scan_id,)).fetchone()
+            if scan["state"] != JobState.DECIDED.value or not review_exception_eligible(
+                scan["decision"], _loads(scan["reason_codes_json"], [])
+            ):
+                raise GatewayError(ErrorCode.FORBIDDEN, "not eligible for a review exception")
+            self._check_scan_bindings(scan)
+            output = conn.execute("SELECT * FROM outputs WHERE scan_id = ? AND deleted_at IS NULL", (scan_id,)).fetchone()
+            if output is None or output["output_digest"] != req["result_digest"]:
+                raise GatewayError(ErrorCode.CONTEXT_CHANGED, "result digest mismatch")
+            now = self._now()
+            expires = min(after(now, min(requested, self.config.retention.review_exception_max_seconds)),
+                          parse_iso(scan["decision_expires_at"]))
             conn.execute(
                 "INSERT INTO review_exceptions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
                 (
@@ -1501,6 +1597,7 @@ class GatewayService:
         row = self._owned("evidence", "evidence_id", evidence_id, principal)
         if row["deleted_at"] or parse_iso(row["expires_at"]) <= self._now():
             raise GatewayError(ErrorCode.NOT_FOUND, "evidence expired")
+        self._source_expiry(self._scan(row["scan_id"]))
         if row["source"] == "COLLECTOR":
             ev = self.db.query_one(
                 "SELECT * FROM collector_events WHERE event_id = ? AND tenant_id = ?", (row["collector_event_id"], row["tenant_id"])
@@ -1575,6 +1672,9 @@ class GatewayService:
         scan = self._scan(row["scan_id"])
         if scan["state"] not in (JobState.EXTRACTING.value, JobState.INSPECTING.value):
             raise GatewayError(ErrorCode.FORBIDDEN, "scan not active")
+        session = self.db.query_one("SELECT * FROM task_sessions WHERE task_session_id = ?", (scan["task_session_id"],))
+        if self._current_bindings(session)["context_hash"] != scan["context_hash"]:
+            raise GatewayError(ErrorCode.CONTEXT_CHANGED, "bindings changed")
         return row, assignment, scan
 
     def validate_job_token(self, capability: str, verified_identity: Mapping) -> dict:
@@ -1679,8 +1779,8 @@ class GatewayService:
                     conn.execute(f"DELETE FROM {table} WHERE scan_id = ?", (scan_id,))
                 conn.execute("DELETE FROM scans WHERE scan_id = ?", (scan_id,))
             counts["metadata_deleted"] = len(old)
-            conn.execute("DELETE FROM resources WHERE deleted_at IS NOT NULL AND deleted_at <= ?", (meta_cutoff,))
-            conn.execute("DELETE FROM task_sessions WHERE expires_at <= ?", (meta_cutoff,))
+            conn.execute("DELETE FROM resources WHERE deleted_at IS NOT NULL AND created_at <= ?", (meta_cutoff,))
+            conn.execute("DELETE FROM task_sessions WHERE created_at <= ?", (meta_cutoff,))
             conn.execute("DELETE FROM labels WHERE created_at <= ? AND NOT EXISTS ("
                          "SELECT 1 FROM resources r WHERE r.resource_id = labels.source_resource_id)", (meta_cutoff,))
             conn.execute("DELETE FROM job_tokens WHERE expires_at <= ? OR revoked_at IS NOT NULL", (now_iso,))
@@ -1693,7 +1793,12 @@ class GatewayService:
 
 
 _CURRENCY_SYMBOLS = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY"}
-_AMOUNT_TOKEN = re.compile(r"(?<![\w.,])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w.]|,\d)")
+_PUBLIC_MEDIA_TYPES = {"application/pdf", "application/octet-stream", "message/rfc822", "text/plain", "text/html", "image/png", "image/jpeg"}
+_PUBLIC_UNSUPPORTED_REASONS = {"UNSUPPORTED_FORMAT", "UNSUPPORTED_CONTENT", "ENCRYPTED_CONTENT", "LIMIT_EXCEEDED", "EXTRACTION_ERROR"}
+_AMOUNT_TOKEN = re.compile(
+    r"(?<![\w.,])(?:(?P<sign_before>[-+])\s*(?:[$€£¥]\s*)?|[$€£¥]\s*(?P<sign_after>[-+]?)\s*)?"
+    r"(?P<number>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?![\w.]|,\d)"
+)
 _DATE_FORMATS = ("%Y-%m-%d", "%d %B %Y", "%B %d, %Y", "%d %b %Y", "%b %d, %Y")
 
 
