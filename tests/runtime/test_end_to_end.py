@@ -45,11 +45,17 @@ def test_fixed_roster_slim_round_trip(runtime):
     assert receipt["status"] == "DELIVERED"  # delivery, not completion
     assert wait_for(finished(runtime, assignment))
     [(identity, result)] = runtime.core.results
-    assert (identity.worker_identity, identity.role, identity.assignment_id, identity.attempt) == ("test.inspector.ok", "instruction_inspector", assignment["assignment_id"], 1)
-    assert result["inspection_status"] == "COMPLETE" and result["bytes_read"] > 0 and result["model_stop_reason"] == "end_turn"
+    assert (identity.worker_identity, identity.role, identity.assignment_id, identity.attempt) == ("test.inspector.ok", "instruction", assignment["assignment_id"], 1)
+    assert identity.build == "b1" and len(identity.source_hash) == 64
+    assert result["inspection_status"] == "COMPLETE" and result["chars_read"] == 17 and result["view_hash_ok"] is True
+    assert result["checked_views"] == [{"resource_id": "res-1", "view_id": "res-1:0"}] and result["findings"] == []
+    # This inspection assignment lists views only, so the original bytes are not readable through it.
+    assert result["original"] == "DENIED CallbackError"
     # An inspector without the simulated-tool capability cannot attempt tools, and nothing was recorded.
     assert result["tools"].startswith("DENIED") and runtime.core.events == []
-    assert runtime.test_transport.calls == [{"model": "claude-opus-5-5", "tools": [], "max_output_tokens": 1000}]  # capped to the job token budget
+    [call] = runtime.test_transport.calls
+    assert call["model"] == "claude-opus-5-5" and call["max_output_tokens"] == 1000  # capped to the job token budget
+    assert call["system"].startswith("inspect") and "please pay 10 EUR" in call["user"]
     assert outcome(runtime, assignment) == "ACCEPTED"
     assert not (runtime.config.state_dir / "scratch").exists() or not any((runtime.config.state_dir / "scratch").iterdir())
     assert runtime._grants.all() == []
@@ -76,6 +82,7 @@ def test_worker_cannot_reach_credentials_other_jobs_or_network(runtime, state_ro
         assert result[scope], scope
         assert all(value.startswith("DENIED") for value in result[scope].values()), (scope, result[scope])
     assert result["curl"].startswith("DENIED") and result["bad_endpoint"] == "DENIED CallbackError"
+    assert result["other_assignment"] == "DENIED CallbackError"  # a model request about another scan
     assert not outside.exists() and runtime.test_transport.calls == []
 
 
@@ -85,14 +92,21 @@ def test_behavior_evidence_survives_a_harmless_final_answer(runtime):
     assert wait_for(finished(runtime, assignment))
     [(_, result)] = runtime.core.results
     assert result["final_text"] == "Here is a harmless summary."
-    assert result["outcomes"] == ["DENIED", "EXECUTED_DUMMY", "DENIED"]
     events = [event for _, event in runtime.core.events]
     assert [(e["sequence"], e["operation"], e["attempted_outcome"], e["policy_check"]) for e in events] == [
         (1, "send_email", "DENIED", "FORBIDDEN"),
-        (2, "read_email", "PROPOSED", "PERMITTED"),
-        (3, "read_email", "EXECUTED_DUMMY", "PERMITTED"),
-        (4, "UNKNOWN_OPERATION", "DENIED", "FORBIDDEN"),
+        (2, "read_email", "PROPOSED", "ALLOWED"),
+        (3, "read_email", "EXECUTED_DUMMY", "ALLOWED"),
+        (4, "launch_shell", "DENIED", "FORBIDDEN"),
     ]
+    # The receipts the worker saw are the recorded events (without the signature), in the shape C checks.
+    receipts = result["receipts"]
+    assert [r["event_id"] for r in receipts] == [events[0]["event_id"], events[2]["event_id"], events[3]["event_id"]]
+    assert result["collector_event_ids"] == [r["event_id"] for r in receipts]
+    for receipt in receipts:
+        assert receipt["scan_id"] == assignment["scan_id"] and receipt["run_id"] == assignment["run_id"]
+        assert len(receipt["dummy_argument_digest"]) == 64 and receipt["policy_check"] in ("ALLOWED", "FORBIDDEN") and "signature" not in receipt
+    assert receipts[1]["proposed_event_id"] == events[1]["event_id"]
     assert all(e["scan_id"] == assignment["scan_id"] and runtime.collector.verify(e) for e in events)
     assert all(identity == runtime.collector.identity for identity, _ in runtime.core.events)
     assert "secret" not in str(events) and "attacker@example.com" not in str(events)  # digests only
@@ -102,8 +116,8 @@ def test_extractor_gets_no_model_tools_or_slim(runtime):
     ports = [runtime._broker_service.port, runtime.slim.port]
     assignment = make_assignment(runtime, "test.extractor", limits={"probe_ports": ports})
     result = runtime.extract(assignment)
-    assert result["status"] == "COMPLETE" and result["views"] == ["art_view-0.txt"]
-    assert runtime.core.artifacts["view-0.txt"].startswith(b"SUBJECT")
+    assert result["extraction_status"] == "COMPLETE" and result["resources"][0]["views"] == [{"evidence_id": "art_1"}]
+    assert runtime.core.artifacts == [{"view_id": "res-1:0", "text": "SUBJECT: INVOICE\n\nPLEASE PAY 10 EUR"}]
     assert result["unassigned_read"] == "DENIED CallbackError"
     assert all(probe.startswith("DENIED") for probe in result["port_probes"]) and len(result["port_probes"]) == 2
     assert runtime.core.results == []  # extraction results return to A directly, not as findings
@@ -129,7 +143,7 @@ def test_cancel_kills_the_process_group_and_revokes_capabilities(runtime):
     worker_pid, child_pid = map(int, pid_file.read_text().split())
     assert alive(worker_pid) and alive(child_pid)
     token = grant.tokens[caps.KIND_RESOURCE]
-    late = seal(grant.message_key, kind=KIND_WORKER_RESULT, sender={"worker_identity": "test.inspector.hang", "role": "instruction_inspector"},
+    late = seal(grant.message_key, kind=KIND_WORKER_RESULT, sender={"worker_identity": "test.inspector.hang", "role": "instruction"},
                 assignment_id=grant.assignment_id, scan_id=grant.scan_id, attempt=1, body={"inspection_status": "COMPLETE"})
     runtime.cancel(assignment["scan_id"])
     assert wait_for(lambda: not alive(worker_pid) and not alive(child_pid), timeout=5)
@@ -143,6 +157,19 @@ def test_cancel_kills_the_process_group_and_revokes_capabilities(runtime):
     assert runtime.dispatch([make_assignment(runtime, "test.inspector.ok", scan_id=assignment["scan_id"])])[0]["reason_code"] == "SCAN_CANCELED"
 
 
+def test_slim_failure_during_delivery_is_a_failed_receipt_with_full_cleanup(runtime, monkeypatch):
+    def broken(*args, **kwargs):
+        raise ConnectionError("SLIM node unreachable")
+    monkeypatch.setattr(runtime.slim, "deliver", broken)
+    assignment = make_assignment(runtime, "test.inspector.ok")
+    [receipt] = runtime.dispatch([assignment])
+    assert (receipt["status"], receipt["reason_code"]) == ("FAILED", "DELIVERY_FAILED:ConnectionError") and "delivered_at" not in receipt
+    assert outcome(runtime, assignment) == "DELIVERY_FAILED:ConnectionError"
+    assert runtime.core.results == [] and runtime._grants.all() == [] and runtime._running == {}
+    assert runtime.core.failures == [(assignment["assignment_id"], 1, "DELIVERY_FAILED:ConnectionError")]
+    assert not any((runtime.config.state_dir / "scratch").iterdir())
+
+
 def test_deadline_expiry_cleans_up_without_a_result(runtime):
     assignment = make_assignment(runtime, "test.inspector.hang", deadline=deadline(4))
     assert runtime.dispatch([assignment])[0]["status"] == "DELIVERED"
@@ -154,7 +181,7 @@ def test_dispatch_rejects_anything_outside_the_roster(runtime):
     good = make_assignment(runtime, "test.inspector.ok")
     cases = {
         "WORKER_NOT_IN_ROSTER": dict(worker_identity="downloaded.plugin"),
-        "WORKER_ROLE_MISMATCH": dict(worker_role="behavior_tester"),
+        "WORKER_ROLE_MISMATCH": dict(worker_role="behavior"),
         "WORKER_BUILD_MISMATCH": dict(worker_build="f" * 64),
         "PROMPT_VERSION_MISMATCH": dict(prompt_version="p2"),
         "MODEL_CONFIGURATION_MISMATCH": dict(model_configuration_hash="0" * 64),
@@ -181,9 +208,9 @@ def test_mesh_membership_alone_cannot_submit_a_result(runtime):
     [grant] = runtime._grants.for_scan(victim["scan_id"])
     service = slim.create_service("intruder")
     connection = service.connect(slim.new_insecure_client_config(f"http://127.0.0.1:{runtime.slim.port}"))
-    intruder = service.create_app_with_secret(slim.Name("protection-gateway", "behavior_tester", "intruder"), runtime.slim.mesh_secret)
+    intruder = service.create_app_with_secret(slim.Name("protection-gateway", "behavior", "intruder"), runtime.slim.mesh_secret)
     intruder.subscribe(intruder.name(), connection)
-    forged = seal(b"k" * 32, kind=KIND_WORKER_RESULT, sender={"worker_identity": "test.inspector.hang", "role": "instruction_inspector"},
+    forged = seal(b"k" * 32, kind=KIND_WORKER_RESULT, sender={"worker_identity": "test.inspector.hang", "role": "instruction"},
                   assignment_id=grant.assignment_id, scan_id=grant.scan_id, attempt=1, body={"inspection_status": "COMPLETE", "findings": []})
     try:
         gateway = slim.Name(*runtime.slim.gateway_name)

@@ -110,7 +110,8 @@ class GrantRegistry:
             expires_at=expires_at,
             message_key=secrets.token_bytes(32),
             tokens={kind: secrets.token_urlsafe(32) for kind in kinds},
-            run_id="run_" + secrets.token_hex(12),
+            # A may issue the behavior run id in the assignment; otherwise the runtime mints one.
+            run_id=assignment["run_id"] if isinstance(assignment.get("run_id"), str) and assignment["run_id"] else "run_" + secrets.token_hex(12),
         )
         with self._lock:
             for other in self._grants.values():

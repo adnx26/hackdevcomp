@@ -11,6 +11,8 @@ requires-python = ">=3.11"
 # deploy/README.md. Dependency changes go through teammate B.
 dependencies = [
     "slim-bindings==2.2.0",
+    # Root ASGI server: D's adapters are a standard-library ASGI application.
+    "uvicorn==0.53.0",
 ]
 
 [project.optional-dependencies]

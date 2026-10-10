@@ -1,14 +1,17 @@
-"""Model broker: the only path from a worker or adapter to a model provider.
+"""Model broker: the only path from a worker to a model provider.
 
 The broker owns the provider credential and the single approved
-provider/model configuration. Callers send a typed request; they cannot name
-an endpoint, header, credential, model or tool definition.
+provider/model configuration. A worker sends the typed inspection request
+that C's workers build; it cannot name an endpoint, header, credential or
+model. The broker renders that request into one provider call and returns the
+model's reply parsed as a JSON object.
 """
 
 from __future__ import annotations
 
 import concurrent.futures
 import hashlib
+import json
 import logging
 import threading
 import time
@@ -16,29 +19,23 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Protocol
 
 from .. import CONTRACT_VERSION
-from .collector import TOOL_DEFINITIONS
 from .envelope import canonical_json
 from .errors import Rejected, RuntimeUnavailable
-from .roster import ROLE_BEHAVIOR_TESTER, ROLE_DATA_TOOL_INSPECTOR, ROLE_INSTRUCTION_INSPECTOR
+from .roster import INSPECTOR_ROLES, ROLE_BEHAVIOR_TESTER
 
 log = logging.getLogger("protection_gateway.runtime.model_broker")
-
-ROLE_CONTROLLED_ASSISTANT = "controlled_assistant"
 
 # Approved data processors: provider -> (pinned endpoint, approved models).
 APPROVED_PROVIDERS = {
     "anthropic": ("https://api.anthropic.com", ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1")),
 }
 
-_REQUEST_FIELDS = {"contract_version", "system", "messages", "max_output_tokens", "tool_profile"}
-_BLOCK_FIELDS = {
-    "text": {"type", "text"},
-    "tool_use": {"type", "id", "name", "input"},
-    "tool_result": {"type", "tool_use_id", "content", "is_error"},
-    # Returned by the provider and echoed back unchanged on the next turn.
-    "thinking": {"type", "thinking", "signature"},
-    "redacted_thinking": {"type", "data"},
-}
+# The inspection request C's workers send (workers/inspection.py on their branch).
+_REQUIRED_FIELDS = {"contract_version", "bindings", "system"}
+_PAYLOAD_FIELDS = ("task_policy", "documents", "signals", "history", "response_contract", "fake_confidential_data", "tools")
+_REQUEST_FIELDS = _REQUIRED_FIELDS | {"prompt_version", *_PAYLOAD_FIELDS}
+_OUTPUT_RULE = "\n\nReply with exactly one JSON object and nothing else."
+MAX_RESPONSE_CHARS = 200_000
 
 
 @dataclass(frozen=True)
@@ -69,18 +66,17 @@ class ModelConfig:
 
 
 class ModelTransport(Protocol):
-    def generate(self, config: ModelConfig, *, system: str, messages: list, tools: list, max_output_tokens: int, timeout: float) -> dict:
-        """Return {"stop_reason": str, "content": [blocks], "usage": {"input_tokens": int, "output_tokens": int}}."""
+    def generate(self, config: ModelConfig, *, system: str, user: str, max_output_tokens: int, timeout: float) -> dict:
+        """Return {"stop_reason": str, "text": str, "usage": {"input_tokens": int, "output_tokens": int}}."""
 
 
 @dataclass
 class ModelCaller:
-    """Who is calling, resolved by the gateway — never asserted by the caller."""
+    """Who is calling, resolved by the gateway from the launch it performed — never asserted by the caller."""
 
     caller_id: str
     role: str
-    binding: Mapping[str, Any]  # scan/task ids that A's processor-permission check understands
-    model_configuration_hash: str
+    assignment: Mapping[str, Any]
     is_active: Callable[[], None]  # raises Rejected when expired, revoked or canceled
     canceled: threading.Event
     remaining_seconds: Callable[[], float]
@@ -89,21 +85,18 @@ class ModelCaller:
     tokens: int = 0
 
 
-def _validate_messages(messages: Any) -> None:
-    if not isinstance(messages, list) or not messages:
-        raise Rejected("INVALID_REQUEST", 400)
-    for message in messages:
-        if not isinstance(message, dict) or set(message) != {"role", "content"} or message["role"] not in ("user", "assistant"):
-            raise Rejected("INVALID_REQUEST", 400)
-        content = message["content"]
-        if isinstance(content, str):
-            continue
-        if not isinstance(content, list):
-            raise Rejected("INVALID_REQUEST", 400)
-        for block in content:
-            allowed = _BLOCK_FIELDS.get(block.get("type")) if isinstance(block, dict) else None
-            if allowed is None or not set(block) <= allowed:
-                raise Rejected("INVALID_REQUEST", 400)
+def _parse_object(text: Any) -> dict:
+    if not isinstance(text, str) or len(text) > MAX_RESPONSE_CHARS:
+        raise Rejected("MODEL_RESPONSE_INVALID", 502)
+    start, end = text.find("{"), text.rfind("}")
+    try:
+        value = json.loads(text[start:end + 1]) if start >= 0 and end > start else None
+    except ValueError:
+        value = None
+    if not isinstance(value, dict):
+        # A reply that is not the requested object is never treated as a clean inspection.
+        raise Rejected("MODEL_RESPONSE_INVALID", 502)
+    return value
 
 
 class ModelBroker:
@@ -112,21 +105,6 @@ class ModelBroker:
         self._transport = transport
         self._core = core
         self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="model-broker")
-        # Different caller roles get different tool schemas. Nobody supplies their own.
-        self._tool_profiles: dict[str, list] = {"none": [], "dummy_tools_v1": TOOL_DEFINITIONS}
-        self._role_profiles: dict[str, set[str]] = {
-            ROLE_INSTRUCTION_INSPECTOR: {"none"},
-            ROLE_DATA_TOOL_INSPECTOR: {"none"},
-            ROLE_BEHAVIOR_TESTER: {"none", "dummy_tools_v1"},
-            ROLE_CONTROLLED_ASSISTANT: {"none"},
-        }
-
-    def register_assistant_tool_profile(self, name: str, tools: list) -> None:
-        """Composition-time only: D's gated tool schemas for the controlled assistant."""
-        if name in self._tool_profiles:
-            raise ValueError("tool profile already registered")
-        self._tool_profiles[name] = list(tools)
-        self._role_profiles[ROLE_CONTROLLED_ASSISTANT].add(name)
 
     def generate(self, caller: ModelCaller, request: Any) -> dict:
         started = time.monotonic()
@@ -142,30 +120,34 @@ class ModelBroker:
 
     def _generate(self, caller: ModelCaller, request: Any) -> dict:
         caller.is_active()
-        profiles = self._role_profiles.get(caller.role)
-        if profiles is None:
+        if caller.role not in INSPECTOR_ROLES:
             raise Rejected("ROLE_NOT_PERMITTED")
-        if caller.model_configuration_hash != self.config.hash():
+        if caller.assignment.get("model_configuration_hash") != self.config.hash():
             raise Rejected("MODEL_CONFIGURATION_MISMATCH", 409)
         if not isinstance(request, dict):
             raise Rejected("INVALID_REQUEST", 400)
         if set(request) - _REQUEST_FIELDS:
             # Endpoints, headers, credentials, models and commands all land here.
             raise Rejected("UNEXPECTED_FIELD", 400)
-        if request.get("contract_version") != CONTRACT_VERSION:
-            raise Rejected("CONTRACT_VERSION_MISMATCH", 400)
-        system = request.get("system", "")
-        max_output = request.get("max_output_tokens", self.config.max_output_tokens)
-        profile = request.get("tool_profile", "none")
-        if not isinstance(system, str) or not isinstance(max_output, int) or isinstance(max_output, bool) or max_output < 1:
+        if _REQUIRED_FIELDS - set(request) or request["contract_version"] != CONTRACT_VERSION:
             raise Rejected("INVALID_REQUEST", 400)
-        _validate_messages(request.get("messages"))
-        if profile not in profiles:
-            raise Rejected("TOOL_PROFILE_NOT_PERMITTED")
-        if len(canonical_json(request)) > self.config.max_request_bytes:
-            raise Rejected("LIMIT_EXCEEDED", 413)
+        if not isinstance(request["system"], str) or not isinstance(request["bindings"], dict) or not request["bindings"]:
+            raise Rejected("INVALID_REQUEST", 400)
+        # Task binding: the request must be about the assignment this caller was launched for.
+        if any(caller.assignment.get(key) != value for key, value in request["bindings"].items()):
+            raise Rejected("BINDING_MISMATCH")
+        tools = request.get("tools", [])
+        if not isinstance(tools, list) or (tools and caller.role != ROLE_BEHAVIOR_TESTER):
+            raise Rejected("TOOLS_NOT_PERMITTED")
         try:
-            permitted = self._core.model_processing_permitted(dict(caller.binding), self.config.provider) is True
+            payload = canonical_json({name: request[name] for name in _PAYLOAD_FIELDS if name in request}).decode()
+        except (TypeError, ValueError):
+            raise Rejected("INVALID_REQUEST", 400) from None
+        if len(payload) + len(request["system"]) > self.config.max_request_bytes:
+            raise Rejected("LIMIT_EXCEEDED", 413)
+        binding = {key: caller.assignment.get(key) for key in ("scan_id", "assignment_id", "task_session_id")}
+        try:
+            permitted = self._core.model_processing_permitted(binding, self.config.provider) is True
         except Exception:
             raise RuntimeUnavailable("PROCESSOR_PERMISSION_UNAVAILABLE") from None
         if not permitted:
@@ -175,13 +157,12 @@ class ModelBroker:
             if caller.calls >= self.config.job_call_budget or remaining <= 0:
                 raise Rejected("BUDGET_EXHAUSTED", 429)
             caller.calls += 1
-        max_output = min(max_output, self.config.max_output_tokens, remaining)
         timeout = min(self.config.timeout_seconds, caller.remaining_seconds())
         if timeout <= 0:
             raise Rejected("CAPABILITY_EXPIRED", 401)
         future = self._pool.submit(
-            self._transport.generate, self.config,
-            system=system, messages=request["messages"], tools=self._tool_profiles[profile], max_output_tokens=max_output, timeout=timeout,
+            self._transport.generate, self.config, system=request["system"] + _OUTPUT_RULE, user=payload,
+            max_output_tokens=min(self.config.max_output_tokens, remaining), timeout=timeout,
         )
         deadline = time.monotonic() + timeout
         while True:
@@ -202,26 +183,10 @@ class ModelBroker:
             caller.tokens += int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
         # A response that finished after cancellation or expiry is discarded.
         caller.is_active()
-        return {
-            "contract_version": CONTRACT_VERSION,
-            "stop_reason": response.get("stop_reason"),
-            "content": response.get("content", []),
-            "usage": {"input_tokens": int(usage.get("input_tokens", 0)), "output_tokens": int(usage.get("output_tokens", 0))},
-        }
+        if response.get("stop_reason") != "end_turn":
+            # Refusals and truncated output are incomplete, not empty-and-clean.
+            raise Rejected("MODEL_RESPONSE_INCOMPLETE", 502)
+        return _parse_object(response.get("text"))
 
     def close(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
-
-
-class AssistantModelClient:
-    """`model_client` handed to D's controlled assistant adapter for one task session."""
-
-    def __init__(self, broker: ModelBroker, caller: ModelCaller):
-        self._broker = broker
-        self._caller = caller
-
-    def generate(self, model_request: Mapping[str, Any]) -> dict:
-        return self._broker.generate(self._caller, model_request)
-
-    def cancel(self) -> None:
-        self._caller.canceled.set()

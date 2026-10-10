@@ -47,19 +47,21 @@ def _call(base_url: str, path: str, token: str, payload: dict):
 
 
 class RestrictedIO:
-    """Read assigned inputs, write scoped artifacts, use the job's scratch directory."""
+    """C's restricted I/O: assigned originals, assigned views, scoped private artifacts."""
 
     def __init__(self, boot: dict):
         self._url, self._token = boot["resource_url"], boot["tokens"]["resource"]
         self.scratch_dir = boot["scratch"]
 
-    def read(self, resource_id: str, view_id: str | None = None) -> bytes:
-        data = _call(self._url, "/v1/resource/read", self._token, {"resource_id": resource_id, "view_id": view_id})
+    def read_resource(self, resource_id: str) -> bytes:
+        data = _call(self._url, "/v1/resource/read", self._token, {"resource_id": resource_id})
         return base64.b64decode(data["content_b64"])
 
-    def write_artifact(self, name: str, data: bytes) -> str:
-        payload = {"name": name, "content_b64": base64.b64encode(data).decode()}
-        return _call(self._url, "/v1/artifact/write", self._token, payload)["artifact_id"]
+    def read_view(self, resource_id: str, view_id: str) -> dict:
+        return _call(self._url, "/v1/view/read", self._token, {"resource_id": resource_id, "view_id": view_id})
+
+    def write_artifact(self, artifact: dict) -> str:
+        return _call(self._url, "/v1/artifact/write", self._token, {"artifact": artifact})["artifact_id"]
 
 
 class ModelClient:

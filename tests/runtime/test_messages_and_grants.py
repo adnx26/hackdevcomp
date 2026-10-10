@@ -55,7 +55,7 @@ def test_impersonated_cross_role_and_unassigned_messages_are_rejected(offline):
         # Another mesh member signs with its own key and claims the victim's assignment.
         "SENDER_NOT_AUTHENTICATED": sealed(victim, key=other.message_key),
         # Right key, but the sender claims a different roster identity or role.
-        "SENDER_ROLE_MISMATCH": sealed(victim, sender={"worker_identity": "test.behavior", "role": "behavior_tester"}),
+        "SENDER_ROLE_MISMATCH": sealed(victim, sender={"worker_identity": "test.behavior", "role": "behavior"}),
         # Right key and sender, wrong assignment / scan / attempt.
         "NOT_ASSIGNED": sealed(victim, assignment_id=other.assignment_id),
         "UNEXPECTED_MESSAGE_KIND": sealed(victim, kind=KIND_ASSIGNMENT),
@@ -136,23 +136,56 @@ def test_tokens_are_scoped_by_kind_role_and_lifetime(offline):
 
 def test_resource_service_serves_only_assigned_hash_bound_inputs(offline):
     import hashlib
-    from .conftest import INPUT
-    resources = [{"resource_id": "res-1", "view_id": None, "hash": hashlib.sha256(INPUT).hexdigest()}]
-    grant = grant_for(offline, "test.inspector.ok", 1, resources=resources)
-    token = grant.tokens["resource"]
-    assert offline._http_read(token, {"resource_id": "res-1", "view_id": None})["hash"] == resources[0]["hash"]
+    from .conftest import INPUT, VIEW
+    resources = [{"resource_id": "res-1", "original_hash": hashlib.sha256(INPUT).hexdigest()}]
+    views = [{"resource_id": "res-1", "view_id": "res-1:0", "view_hash": hashlib.sha256(VIEW.encode()).hexdigest()}]
+    extractor = grant_for(offline, "test.extractor", 1, resources=resources, views=views)
+    inspector = grant_for(offline, "test.inspector.ok", 2, resources=resources, views=views)
+    core = offline._core.core
+    # The extractor reads assigned originals; inspectors read assigned views; neither reads the other's.
+    assert offline._http_read(extractor.tokens["resource"], {"resource_id": "res-1"})["content_b64"]
+    assert offline._http_read_view(inspector.tokens["resource"], {"resource_id": "res-1", "view_id": "res-1:0"}) == {"text": VIEW}
+    with pytest.raises(Rejected, match="ROLE_NOT_PERMITTED"):
+        offline._http_read(inspector.tokens["resource"], {"resource_id": "res-1"})
+    with pytest.raises(Rejected, match="ROLE_NOT_PERMITTED"):
+        offline._http_read_view(extractor.tokens["resource"], {"resource_id": "res-1", "view_id": "res-1:0"})
     with pytest.raises(Rejected, match="RESOURCE_NOT_ASSIGNED"):
-        offline._http_read(token, {"resource_id": "res-other", "view_id": None})
-    offline._core.core.inputs[("res-1", None)] = b"changed after assignment"
+        offline._http_read(extractor.tokens["resource"], {"resource_id": "res-other"})
+    with pytest.raises(Rejected, match="RESOURCE_NOT_ASSIGNED"):
+        offline._http_read_view(inspector.tokens["resource"], {"resource_id": "res-1", "view_id": "res-1:9"})
+    core.inputs[("res-1", None)] = b"changed after assignment"
+    core.inputs[("res-1", "res-1:0")] = b"changed after extraction"
     with pytest.raises(Rejected, match="RESOURCE_HASH_MISMATCH"):
-        offline._http_read(token, {"resource_id": "res-1", "view_id": None})
-    for bad in ({"name": "../../etc/passwd", "content_b64": ""}, {"name": "ok.txt", "content_b64": "!!"}, {"name": "ok.txt", "content_b64": "", "path": "/x"}):
+        offline._http_read(extractor.tokens["resource"], {"resource_id": "res-1"})
+    with pytest.raises(Rejected, match="RESOURCE_HASH_MISMATCH"):
+        offline._http_read_view(inspector.tokens["resource"], {"resource_id": "res-1", "view_id": "res-1:0"})
+    token = inspector.tokens["resource"]
+    assert offline._http_write_artifact(token, {"artifact": {"model_findings": []}}) == {"artifact_id": "art_1"}
+    for bad in ({"artifact": "not a mapping"}, {"artifact": {}, "path": "/etc/passwd"}, {"name": "x", "content_b64": ""}):
         with pytest.raises(Rejected, match="INVALID_REQUEST"):
             offline._http_write_artifact(token, bad)
+    with pytest.raises(Rejected, match="LIMIT_EXCEEDED"):
+        offline._http_write_artifact(token, {"artifact": {"text": "x" * (2 * 1024 * 1024)}})
     with pytest.raises(Rejected, match="CAPABILITY_WRONG_SCOPE"):
-        offline._http_read(grant.tokens["model"], {"resource_id": "res-1", "view_id": None})
+        offline._http_read_view(inspector.tokens["model"], {"resource_id": "res-1", "view_id": "res-1:0"})
     with pytest.raises(Rejected, match="INVALID_REQUEST"):  # only the extractor may post an extraction result
-        offline._http_extraction_result(token, {"envelope": sealed(grant).decode()})
+        offline._http_extraction_result(token, {"envelope": sealed(inspector).decode()})
+
+
+def test_a_retry_is_a_separate_attempt_with_its_own_key(offline):
+    """Attempt 1 fails and is cleaned up; its messages cannot satisfy attempt 2, which is accepted once."""
+    first = grant_for(offline, "test.inspector.ok", 1)
+    stale = sealed(first)
+    offline._grants.revoke(first, "WORKER_EXITED")
+    second = offline._grants.issue({**first.assignment, "attempt": 2}, first.record)
+    assert second.message_key != first.message_key and second.tokens != first.tokens
+    assert offline._on_worker_message(second, stale) == "SENDER_NOT_AUTHENTICATED"
+    assert offline._on_worker_message(second, sealed(second, attempt=1)) == "NOT_ASSIGNED"
+    assert offline._on_worker_message(first, stale) == "CAPABILITY_REVOKED"
+    assert offline._core.core.results == []
+    assert offline._on_worker_message(second, sealed(second)) == "ACCEPTED"
+    [(identity, _)] = offline._core.core.results
+    assert identity.attempt == 2
 
 
 def test_envelope_round_trip_and_size_limit():
@@ -167,6 +200,7 @@ def test_default_roster_is_fixed_and_unavailable_until_workers_exist():
     roster = Roster(DEFAULT_ROSTER, [REPO_ROOT / "src"])
     present = (REPO_ROOT / "src" / "protection_gateway" / "workers").is_dir()
     assert present or (roster.records() == [] and set(roster.unavailable().values()) == {"WORKER_ENTRYPOINT_MISSING"})
-    assert [record.role for record in DEFAULT_ROSTER] == ["extractor", "instruction_inspector", "data_tool_inspector", "behavior_tester"]
+    assert [record.role for record in DEFAULT_ROSTER] == ["extractor", "instruction", "data", "behavior"]
+    assert {record.entrypoint for record in DEFAULT_ROSTER} == {"protection_gateway.workers:extract", "protection_gateway.workers:inspect"}
     described = DEFAULT_ROSTER[3].to_oasf()
-    assert described["name"] == "pg.worker.behavior-tester.v1" and described["modules"][0]["data"]["simulated_tools"] is True
+    assert described["name"] == "pg.worker.behavior" and described["version"] == "c-workers-1" and described["modules"][0]["data"]["simulated_tools"] is True

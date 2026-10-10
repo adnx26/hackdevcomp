@@ -41,6 +41,8 @@ class RuntimeConfig:
     tls_cert: Path | None = None
     tls_key: Path | None = None
     web_root: Path = field(default_factory=lambda: REPO_ROOT / "web")
+    # Exact external origins D's adapters accept, e.g. ("https://gateway.example",). Empty = adapters unavailable.
+    allowed_origins: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "RuntimeConfig":
@@ -70,4 +72,5 @@ class RuntimeConfig:
             port=int(env.get("PG_PORT", "8443")),
             tls_cert=path("PG_TLS_CERT"),
             tls_key=path("PG_TLS_KEY"),
+            allowed_origins=tuple(origin.strip() for origin in env.get("PG_ALLOWED_ORIGINS", "").split(",") if origin.strip()),
         )

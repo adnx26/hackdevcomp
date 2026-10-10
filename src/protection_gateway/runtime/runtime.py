@@ -16,11 +16,11 @@ from . import capabilities as caps
 from .capabilities import Grant, GrantRegistry
 from .collector import SimulatedToolCollector
 from .config import RuntimeConfig
-from .envelope import KIND_ASSIGNMENT, KIND_EXTRACTION_RESULT, KIND_WORKER_FAILURE, KIND_WORKER_RESULT, open_sealed, seal, sha256_hex, utc_now
+from .envelope import KIND_ASSIGNMENT, KIND_EXTRACTION_RESULT, KIND_WORKER_FAILURE, KIND_WORKER_RESULT, canonical_json, open_sealed, seal, sha256_hex, utc_now
 from .errors import Rejected, RuntimeUnavailable
 from .isolation import Sandbox
 from .launcher import WorkerProcess, reap_leftovers
-from .model_broker import ROLE_CONTROLLED_ASSISTANT, AssistantModelClient, ModelBroker, ModelCaller, ModelTransport
+from .model_broker import ModelBroker, ModelCaller, ModelTransport
 from .roster import DEFAULT_ROSTER, INSPECTOR_ROLES, ROLE_EXTRACTOR, Roster, WorkerRecord
 from .services import LocalService
 from .slim_transport import ORGANIZATION, SlimNode
@@ -31,16 +31,15 @@ log = logging.getLogger("protection_gateway.runtime")
 CORE_PORT = (
     "accept_worker_result",        # (verified_identity, worker_result)
     "record_collector_event",      # (verified_collector_identity, event)
-    "read_assigned_input",         # (verified_identity, assignment_id, resource_id, view_id) -> bytes
-    "store_worker_artifact",       # (verified_identity, assignment_id, name, data) -> artifact_id
+    "read_assigned_input",         # (verified_identity, assignment_id, resource_id, view_id | None) -> bytes
+    "store_worker_artifact",       # (verified_identity, assignment_id, artifact: dict) -> artifact_id
     "check_simulated_operation",   # (policy_binding, operation, arguments) -> bool
     "model_processing_permitted",  # (binding, provider) -> bool
 )
 # Optional: assignment_active(assignment_id, attempt) -> bool; report_runtime_failure(assignment_id, attempt, reason_code)
 
 MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
-MAX_ARTIFACTS = 32
-_ARTIFACT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
+MAX_ARTIFACTS = 256
 ACCEPTED = "ACCEPTED"
 
 
@@ -51,6 +50,7 @@ class VerifiedIdentity:
     worker_identity: str
     role: str
     build: str
+    source_hash: str
     prompt_version: str
     assignment_id: str
     scan_id: str
@@ -132,6 +132,7 @@ class Runtime:
             self._reasons["slim"] = error.reason_code
         self._resource_service = LocalService("resource", {
             "/v1/resource/read": self._http_read,
+            "/v1/view/read": self._http_read_view,
             "/v1/artifact/write": self._http_write_artifact,
             "/v1/extraction-result": self._http_extraction_result,
         })
@@ -176,25 +177,6 @@ class Runtime:
         self._require("model_broker")
         return {"configuration": self.broker.config.binding(), "hash": self.broker.config.hash()}
 
-    def assistant_model_client(self, task_session_id: str, *, binding: Mapping[str, Any], lifetime_seconds: float = caps.MAX_GRANT_SECONDS) -> AssistantModelClient:
-        """Broker access for D's controlled assistant adapter, scoped to one task session."""
-        self._require("model_broker")
-        expires = time.time() + min(lifetime_seconds, caps.MAX_GRANT_SECONDS)
-        canceled = threading.Event()
-
-        def is_active() -> None:
-            if canceled.is_set():
-                raise Rejected("CANCELED", 409)
-            if time.time() >= expires:
-                raise Rejected("CAPABILITY_EXPIRED", 401)
-
-        caller = ModelCaller(
-            caller_id="assistant:" + task_session_id, role=ROLE_CONTROLLED_ASSISTANT,
-            binding={**binding, "task_session_id": task_session_id}, model_configuration_hash=self.broker.config.hash(),
-            is_active=is_active, canceled=canceled, remaining_seconds=lambda: expires - time.time(),
-        )
-        return AssistantModelClient(self.broker, caller)
-
     # ---- A -> B: extract / dispatch / cancel --------------------------
 
     def extract(self, extraction_assignment: Mapping[str, Any]) -> dict:
@@ -219,7 +201,8 @@ class Runtime:
         if outcome == ACCEPTED and isinstance(result, dict):
             return result
         # A failed run is reported as ERROR; it is never turned into a COMPLETE extraction.
-        return {"contract_version": CONTRACT_VERSION, "assignment_id": grant.assignment_id, "scan_id": grant.scan_id, "status": "ERROR", "reason_code": "RUNTIME_" + outcome}
+        return {"contract_version": CONTRACT_VERSION, "assignment_id": grant.assignment_id, "scan_id": grant.scan_id,
+                "extraction_status": "ERROR", "resources": [], "reason_codes": ["RUNTIME_" + outcome]}
 
     def dispatch(self, inspection_assignments: Iterable[Mapping[str, Any]]) -> list[dict]:
         """Launch each assigned inspector and deliver its job over SLIM. Delivery is not completion."""
@@ -276,7 +259,7 @@ class Runtime:
 
     def _identity(self, grant: Grant) -> VerifiedIdentity:
         record = grant.record
-        return VerifiedIdentity(record.worker_identity, record.role, record.build, record.prompt_version, grant.assignment_id, grant.scan_id, grant.attempt)
+        return VerifiedIdentity(record.worker_identity, record.role, record.build, record.source_hash, record.prompt_version, grant.assignment_id, grant.scan_id, grant.attempt)
 
     def _start(self, assignment: Mapping[str, Any], record: WorkerRecord, *, ports: list[int], slim_name) -> Grant:
         if not self.sandbox.verified:
@@ -411,32 +394,50 @@ class Runtime:
 
     # ---- loopback services (called by sandboxed workers) ---------------
 
-    def _http_read(self, token: str | None, payload: dict) -> dict:
-        grant = self._grants.authenticate(token, caps.KIND_RESOURCE)
-        if set(payload) != {"resource_id", "view_id"}:
-            raise Rejected("INVALID_REQUEST", 400)
-        assigned = next((r for r in grant.assignment.get("resources", ()) if r.get("resource_id") == payload["resource_id"] and r.get("view_id") == payload["view_id"]), None)
+    def _read(self, grant: Grant, assigned: Mapping | None, hash_key: str, view_id) -> bytes:
         if assigned is None:
             raise Rejected("RESOURCE_NOT_ASSIGNED")
         # A validates tenant and resource access; the runtime supplies the identity it launched.
-        data = self._core.read_assigned_input(self._identity(grant), grant.assignment_id, payload["resource_id"], payload["view_id"])
-        if not isinstance(data, bytes) or sha256_hex(data) != assigned.get("hash"):
+        data = self._core.read_assigned_input(self._identity(grant), grant.assignment_id, assigned["resource_id"], view_id)
+        if not isinstance(data, bytes) or sha256_hex(data) != assigned.get(hash_key):
             raise Rejected("RESOURCE_HASH_MISMATCH", 409)
-        return {"content_b64": base64.b64encode(data).decode(), "hash": assigned["hash"]}
+        return data
+
+    def _http_read(self, token: str | None, payload: dict) -> dict:
+        """Original bytes of an assigned resource (extraction assignments)."""
+        grant = self._grants.authenticate(token, caps.KIND_RESOURCE)
+        if grant.record.role != ROLE_EXTRACTOR:  # inspectors work from extracted views only
+            raise Rejected("ROLE_NOT_PERMITTED")
+        if set(payload) != {"resource_id"}:
+            raise Rejected("INVALID_REQUEST", 400)
+        assigned = next((r for r in grant.assignment.get("resources", ()) if r.get("resource_id") == payload["resource_id"]), None)
+        return {"content_b64": base64.b64encode(self._read(grant, assigned, "original_hash", None)).decode()}
+
+    def _http_read_view(self, token: str | None, payload: dict) -> dict:
+        """Text of an assigned extracted view (inspection assignments)."""
+        grant = self._grants.authenticate(token, caps.KIND_RESOURCE)
+        if grant.record.role == ROLE_EXTRACTOR:
+            raise Rejected("ROLE_NOT_PERMITTED")
+        if set(payload) != {"resource_id", "view_id"} or payload["view_id"] is None:
+            raise Rejected("INVALID_REQUEST", 400)
+        assigned = next((v for v in grant.assignment.get("views", ()) if v.get("resource_id") == payload["resource_id"] and v.get("view_id") == payload["view_id"]), None)
+        try:
+            return {"text": self._read(grant, assigned, "view_hash", payload["view_id"]).decode("utf-8")}
+        except UnicodeDecodeError:
+            raise Rejected("RESOURCE_HASH_MISMATCH", 409) from None
 
     def _http_write_artifact(self, token: str | None, payload: dict) -> dict:
         grant = self._grants.authenticate(token, caps.KIND_RESOURCE)
-        if set(payload) != {"name", "content_b64"} or not isinstance(payload["name"], str) or not _ARTIFACT_NAME.fullmatch(payload["name"]):
+        if set(payload) != {"artifact"} or not isinstance(payload["artifact"], dict):
             raise Rejected("INVALID_REQUEST", 400)
-        try:
-            data = base64.b64decode(payload["content_b64"], validate=True)
-        except (ValueError, TypeError):
-            raise Rejected("INVALID_REQUEST", 400) from None
         with grant.lock:
-            if len(data) > MAX_ARTIFACT_BYTES or grant.artifacts_written >= MAX_ARTIFACTS:
+            if len(canonical_json(payload["artifact"])) > MAX_ARTIFACT_BYTES or grant.artifacts_written >= MAX_ARTIFACTS:
                 raise Rejected("LIMIT_EXCEEDED", 413)
             grant.artifacts_written += 1
-        return {"artifact_id": self._core.store_worker_artifact(self._identity(grant), grant.assignment_id, payload["name"], data)}
+        artifact_id = self._core.store_worker_artifact(self._identity(grant), grant.assignment_id, payload["artifact"])
+        if not isinstance(artifact_id, str) or not artifact_id:
+            raise RuntimeUnavailable("ARTIFACT_NOT_STORED")
+        return {"artifact_id": artifact_id}
 
     def _http_extraction_result(self, token: str | None, payload: dict) -> dict:
         grant = self._grants.authenticate(token, caps.KIND_RESOURCE)
@@ -455,9 +456,7 @@ class Runtime:
             caller = self._callers.get(grant.grant_id)
             if caller is None:
                 caller = self._callers[grant.grant_id] = ModelCaller(
-                    caller_id="assignment:" + grant.assignment_id, role=grant.record.role,
-                    binding={key: grant.assignment.get(key) for key in ("scan_id", "assignment_id", "task_session_id")},
-                    model_configuration_hash=grant.assignment.get("model_configuration_hash", ""),
+                    caller_id="assignment:" + grant.assignment_id, role=grant.record.role, assignment=grant.assignment,
                     is_active=grant.check_active, canceled=grant.revoked, remaining_seconds=grant.remaining,
                 )
         try:

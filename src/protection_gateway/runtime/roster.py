@@ -15,9 +15,10 @@ from typing import Iterable, Mapping
 from .errors import Rejected
 
 ROLE_EXTRACTOR = "extractor"
-ROLE_INSTRUCTION_INSPECTOR = "instruction_inspector"
-ROLE_DATA_TOOL_INSPECTOR = "data_tool_inspector"
-ROLE_BEHAVIOR_TESTER = "behavior_tester"
+# Inspector role keys are the ones C's `inspect` entrypoint dispatches on.
+ROLE_INSTRUCTION_INSPECTOR = "instruction"
+ROLE_DATA_TOOL_INSPECTOR = "data"
+ROLE_BEHAVIOR_TESTER = "behavior"
 INSPECTOR_ROLES = (ROLE_INSTRUCTION_INSPECTOR, ROLE_DATA_TOOL_INSPECTOR, ROLE_BEHAVIOR_TESTER)
 WORKER_ROLES = (ROLE_EXTRACTOR, *INSPECTOR_ROLES)
 
@@ -33,7 +34,8 @@ class WorkerRecord:
     role: str
     entrypoint: str  # "package.module:function"
     prompt_version: str
-    build: str = ""  # filled from the hashed source tree at activation
+    build: str  # version the worker declares; assignments must name it
+    source_hash: str = ""  # hash of the worker's source tree, computed at activation
 
     def __post_init__(self):
         if self.role not in WORKER_ROLES:
@@ -61,6 +63,7 @@ class WorkerRecord:
             "schema_version": "0.7.0",
             "name": self.worker_identity,
             "version": self.build,
+            "annotations": {"source_hash": self.source_hash},
             "description": f"Fixed-roster protection gateway worker: {self.role}",
             "skills": [{"name": skill} for skill in skills],
             "locators": [{"type": "python_entrypoint", "url": self.entrypoint}],
@@ -79,12 +82,14 @@ class WorkerRecord:
         }
 
 
-# Entry points and prompt versions are C's to confirm when their PR lands.
+# Entry points and versions as published in C's handoff (workers/HANDOFF.md on their branch):
+# one `extract` and one `inspect` in the package, the latter dispatching on worker_role.
+_WORKERS = "protection_gateway.workers:"
 DEFAULT_ROSTER = (
-    WorkerRecord("pg.worker.extractor.v1", ROLE_EXTRACTOR, "protection_gateway.workers.extractor:extract", "none"),
-    WorkerRecord("pg.worker.instruction-inspector.v1", ROLE_INSTRUCTION_INSPECTOR, "protection_gateway.workers.instruction_inspector:inspect", "v1"),
-    WorkerRecord("pg.worker.data-tool-inspector.v1", ROLE_DATA_TOOL_INSPECTOR, "protection_gateway.workers.data_tool_inspector:inspect", "v1"),
-    WorkerRecord("pg.worker.behavior-tester.v1", ROLE_BEHAVIOR_TESTER, "protection_gateway.workers.behavior_tester:inspect", "v1"),
+    WorkerRecord("pg.worker.extractor", ROLE_EXTRACTOR, _WORKERS + "extract", "none", "c-extractor-1"),
+    WorkerRecord("pg.worker.instruction", ROLE_INSTRUCTION_INSPECTOR, _WORKERS + "inspect", "c-prompts-1", "c-workers-1"),
+    WorkerRecord("pg.worker.data", ROLE_DATA_TOOL_INSPECTOR, _WORKERS + "inspect", "c-prompts-1", "c-workers-1"),
+    WorkerRecord("pg.worker.behavior", ROLE_BEHAVIOR_TESTER, _WORKERS + "inspect", "c-prompts-1", "c-workers-1"),
 )
 
 
@@ -110,7 +115,7 @@ class Roster:
                 self._unavailable[record.worker_identity] = "WORKER_ENTRYPOINT_MISSING"
                 continue
             self._records[record.worker_identity] = WorkerRecord(
-                record.worker_identity, record.role, record.entrypoint, record.prompt_version, tree_hash(package_dir)
+                record.worker_identity, record.role, record.entrypoint, record.prompt_version, record.build, tree_hash(package_dir)
             )
 
     def _package_dir(self, record: WorkerRecord) -> Path | None:
