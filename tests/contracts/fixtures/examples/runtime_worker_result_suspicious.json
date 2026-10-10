@@ -1,0 +1,52 @@
+{
+  "artifacts": [
+    {
+      "artifact_id": "expl-1",
+      "kind": "EXPLANATION",
+      "text": "Imperative override aimed at the assistant."
+    }
+  ],
+  "assignment_id": "ia_0009",
+  "attempt": 1,
+  "checked_views": [
+    {
+      "resource_id": "res_0003",
+      "view_hash": "17fa996fcad79d5a00d1b495a6a6731f3b4036c04aff4107334b393e8fe23792",
+      "view_id": "visible"
+    }
+  ],
+  "context_hash": "61928a3c5a2c6d5d3afa74e04b1c7e2124a28e5ae31ccdc080c26a88c02db0da",
+  "contract_version": "v1",
+  "findings": [
+    {
+      "category": "OVERRIDE_ATTEMPT",
+      "evidence_ids": [
+        "expl-1"
+      ],
+      "resource_id": "res_0003",
+      "span": {
+        "end": 28,
+        "start": 0
+      },
+      "view_hash": "17fa996fcad79d5a00d1b495a6a6731f3b4036c04aff4107334b393e8fe23792"
+    }
+  ],
+  "inspection_status": "COMPLETE",
+  "model_configuration_hash": "63ad0100886734806bc535a6888090e82e19d5f90792bbac63f44e32593c3c29",
+  "nonce": "nonce-ia_0009-1-COMPLETE",
+  "policy": {
+    "policy_hash": "a75a97104e4bdc3227e54be67d6c63f000d4ab3d873b13bc39ed80a4e380b4e8",
+    "policy_id": "summarize_email",
+    "policy_version": "1"
+  },
+  "resource_set_hash": "d4b62f820fad4fb6c55d9b9ddcac94cc5be2b4a8b3831440cccbc9926267c22f",
+  "scan_id": "scan_0006",
+  "task_scope_version": 1,
+  "task_session_id": "ts_0005",
+  "worker": {
+    "build_version": "i-1.0",
+    "prompt_version": "ip-1",
+    "role": "INSTRUCTION_INSPECTOR",
+    "worker_id": "w-instruction"
+  }
+}

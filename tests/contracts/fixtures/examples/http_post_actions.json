@@ -1,0 +1,49 @@
+{
+  "request": {
+    "action": {
+      "arguments": {
+        "attachment_resource_ids": [
+          "res_0003"
+        ],
+        "body": "Attached.",
+        "subject": "Q3 report",
+        "to": "carol@example.com"
+      },
+      "operation": "simulated_send_email"
+    },
+    "contract_version": "v1",
+    "task_session_id": "ts_0005"
+  },
+  "response": {
+    "contract_version": "v1",
+    "data": {
+      "action_id": "act_0015",
+      "context_hash": "a72d0afa0d29c7f565f5c0a3ff63a7b58c7385defaef5421899bbc0b54b947bf",
+      "digest": "af6134a7010b7b281c7cce972bac8f61b3107da140e461d5dd152f5b9b646e1f",
+      "expires_at": "2026-10-10T12:10:00Z",
+      "label_ids": [
+        "lbl_0004"
+      ],
+      "operation": "simulated_send_email",
+      "policy_id": "simulate_send",
+      "preview": {
+        "attachments": [
+          {
+            "original_hash": "a6c06336a71f7d255df7bddf4942ec1817cbcee447d1e18af39f7a88e0b37996",
+            "resource_id": "res_0003"
+          }
+        ],
+        "body": "Attached.",
+        "body_sha256": "0e97fe4c6ed2a61cada5f6536bd736a8d6eddd63a80a298d0587e6f1c8845822",
+        "subject": "Q3 report",
+        "to": "carol@example.com"
+      },
+      "recipient_trust": "TRUSTED_CONTACT",
+      "requires_recipient_selection": false,
+      "state": "PROPOSED",
+      "task_scope_version": 1,
+      "task_session_id": "ts_0005"
+    }
+  },
+  "response_status": 201
+}

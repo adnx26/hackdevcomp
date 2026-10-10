@@ -1,0 +1,20 @@
+{
+  "contract_version": "v1",
+  "description": "One confirmed simulated send records one effect; replays and edits cannot add effects.",
+  "expected": {
+    "confirm_from_assistant_channel": {
+      "code": "FORBIDDEN",
+      "http_status": 403,
+      "retryable": false
+    },
+    "dummy_effects_recorded": 1,
+    "executed_state": "EXECUTED",
+    "new_key_after_execution": {
+      "code": "APPROVAL_REQUIRED",
+      "http_status": 428,
+      "retryable": false
+    },
+    "same_idempotency_key_returns_same_response": true
+  },
+  "scenario": "action_replay"
+}

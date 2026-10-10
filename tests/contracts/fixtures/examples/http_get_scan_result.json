@@ -1,0 +1,91 @@
+{
+  "response": {
+    "contract_version": "v1",
+    "data": {
+      "decision": "ALLOW_UNDER_POLICY",
+      "expires_at": "2026-10-10T13:00:00Z",
+      "labels": [
+        {
+          "disclosure": "PRIVATE_TO_OWNER",
+          "label_id": "lbl_0002"
+        }
+      ],
+      "read_only": true,
+      "release_basis": "ALLOW_UNDER_POLICY",
+      "result": {
+        "context_hash": "7d842a9038216dfa2a14e3477d16764b93a62d9b9dda9bd9b154935459ce1078",
+        "contract_version": "v1",
+        "label_ids": [
+          "lbl_0002"
+        ],
+        "output": {
+          "fields": {
+            "amount": {
+              "label_ids": [
+                "lbl_0002"
+              ],
+              "source_refs": [
+                {
+                  "end": 38,
+                  "resource_id": "res_0001",
+                  "start": 29,
+                  "view_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d"
+                }
+              ],
+              "value": "1250.00"
+            },
+            "currency": {
+              "label_ids": [
+                "lbl_0002"
+              ],
+              "source_refs": [
+                {
+                  "end": 42,
+                  "resource_id": "res_0001",
+                  "start": 39,
+                  "view_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d"
+                }
+              ],
+              "value": "USD"
+            },
+            "due_date": {
+              "label_ids": [
+                "lbl_0002"
+              ],
+              "source_refs": [
+                {
+                  "end": 63,
+                  "resource_id": "res_0001",
+                  "start": 53,
+                  "view_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d"
+                }
+              ],
+              "value": "2026-11-01"
+            },
+            "invoice_id": {
+              "label_ids": [
+                "lbl_0002"
+              ],
+              "source_refs": [
+                {
+                  "end": 16,
+                  "resource_id": "res_0001",
+                  "start": 8,
+                  "view_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d"
+                }
+              ],
+              "value": "INV-1001"
+            }
+          },
+          "kind": "invoice"
+        },
+        "policy_id": "extract_invoice",
+        "scan_id": "scan_0004",
+        "trust": "UNTRUSTED_INSPECTED_UNDER_POLICY"
+      },
+      "result_digest": "889d8d52f00a70533d88eaf15df39248eecd1ed950b02fd9c0476121a7ac74c0",
+      "scan_id": "scan_0004"
+    }
+  },
+  "response_status": 200
+}

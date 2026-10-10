@@ -1,0 +1,19 @@
+{
+  "request": {
+    "content_base64": "SW52b2ljZSBJTlYtMTAwMQpBbW91bnQgZHVlOiAkMSwyNTAuMDAgVVNECkR1ZSBkYXRlOiAyMDI2LTExLTAxClRoYW5rcywgQWNtZQ==",
+    "contract_version": "v1",
+    "media_type": "text/plain"
+  },
+  "response": {
+    "contract_version": "v1",
+    "data": {
+      "expires_at": "2026-10-11T12:00:00Z",
+      "media_type": "text/plain",
+      "original_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d",
+      "resource_id": "res_0001",
+      "size_bytes": 76,
+      "storage_state": "STORED"
+    }
+  },
+  "response_status": 201
+}
