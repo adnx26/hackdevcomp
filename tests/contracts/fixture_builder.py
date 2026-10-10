@@ -30,14 +30,14 @@ class Recorder:
         original_extract = runtime.extract
         original_dispatch = runtime.dispatch
 
-        def extract(assignment, *, capability):
-            result = original_extract(assignment, capability=capability)
+        def extract(assignment):
+            result = original_extract(assignment)
             self.messages.setdefault("extraction_assignment", dict(assignment))
             self.messages.setdefault("extraction_result", dict(result))
             return result
 
-        def dispatch(assignments, *, capabilities):
-            receipts = original_dispatch(assignments, capabilities=capabilities)
+        def dispatch(assignments):
+            receipts = original_dispatch(assignments)
             self.messages.setdefault("inspection_assignment", dict(assignments[0]))
             self.messages.setdefault("dispatch_receipts", list(receipts))
             return receipts

@@ -14,20 +14,20 @@ class RuntimeUnavailable(Exception):
 
 
 class RuntimeCallbacks(Protocol):
-    def extract(self, extraction_assignment: Mapping, *, capability: str) -> Mapping:
+    def extract(self, extraction_assignment: Mapping) -> Mapping:
         """Run C's extractor under B's restrictions; return an extraction_result.
 
-        ``capability`` is a short-lived job token that lets the extractor read
-        exactly this resource through ``GatewayService.read_assigned_original``.
-        Provision it privately; never log or broadcast it.
+        B provisions the extractor's resource capability privately by calling
+        ``GatewayService.issue_job_capability(assignment_id)``; the extractor
+        reads through ``GatewayService.read_assigned_original``.
         """
 
-    def dispatch(
-        self, inspection_assignments: Sequence[Mapping], *, capabilities: Mapping[str, str]
-    ) -> Sequence[Mapping]:
+    def dispatch(self, inspection_assignments: Sequence[Mapping]) -> Sequence[Mapping]:
         """Deliver assignments over SLIM. Return receipts
         ``{"assignment_id": str, "delivered": bool}``. Delivery is not completion.
-        ``capabilities`` maps assignment_id -> job token.
+        B provisions each worker's capability privately through
+        ``GatewayService.issue_job_capability``; it never travels in the
+        assignment message.
         """
 
     def cancel(self, scan_id: str) -> None:

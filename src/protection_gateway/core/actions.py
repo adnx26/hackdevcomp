@@ -200,6 +200,7 @@ class ActionGate:
     def propose(self, principal: Principal, body: Mapping) -> dict:
         self.s._require_channel(principal, WRITE_CHANNELS)
         req = schemas.validate(schemas.action_request, body)
+        self.s._require_not_stopped()
         session = self.s._active_session(principal, req["task_session_id"])
         policy = get_policy(session["policy_id"])
         if not policy.permits_simulated_send:
@@ -253,6 +254,7 @@ class ActionGate:
         # Only the user-owned interface session (cookie + CSRF) can confirm.
         self.s._require_channel(principal, frozenset({Channel.USER_INTERFACE}))
         req = schemas.validate(schemas.confirm_request, body)
+        self.s._require_not_stopped()
         row = self.s._owned("actions", "action_id", action_id, principal)
         self._expire_if_needed(row)
         if row["state"] == ActionState.CONFIRMED.value and req["digest"] == row["digest"]:
@@ -288,6 +290,7 @@ class ActionGate:
     def execute(self, principal: Principal, action_id: str, body: Mapping, idempotency_key: str | None) -> dict:
         self.s._require_channel(principal, WRITE_CHANNELS)
         schemas.validate(schemas.empty_request, body)
+        self.s._require_not_stopped()
         if not idempotency_key or not ID_PATTERN.match(idempotency_key):
             raise GatewayError(ErrorCode.INVALID_REQUEST, "idempotency key required")
         row = self.s._owned("actions", "action_id", action_id, principal)

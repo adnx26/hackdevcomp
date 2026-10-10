@@ -69,9 +69,11 @@ class RuntimeDouble:
         self.fail_dispatch = False
         self.undeliver_roles: set[str] = set()
 
-    def extract(self, assignment, *, capability):
+    def extract(self, assignment):
         if self.fail_extract:
             raise ConnectionError("runtime down")
+        # B provisions the extractor's capability privately.
+        capability = self.service.issue_job_capability(assignment["assignment_id"])
         data = self.service.read_assigned_original(capability, IDENTITIES["EXTRACTOR"], assignment["resource_id"])
         text = data.decode("utf-8")
         result = {
@@ -95,13 +97,13 @@ class RuntimeDouble:
         result.update(self.extract_overrides.get(assignment["resource_id"], {}))
         return result
 
-    def dispatch(self, assignments, *, capabilities):
+    def dispatch(self, assignments):
         if self.fail_dispatch:
             raise ConnectionError("slim down")
         receipts = []
         for a in assignments:
             self.assignments[a["assignment_id"]] = a
-            self.capabilities[a["assignment_id"]] = capabilities[a["assignment_id"]]
+            self.capabilities[a["assignment_id"]] = self.service.issue_job_capability(a["assignment_id"])
             receipts.append({"assignment_id": a["assignment_id"], "delivered": a["worker"]["role"] not in self.undeliver_roles})
         return receipts
 

@@ -148,6 +148,7 @@ class GatewayService:
     def upload_resource(self, principal: Principal, body: Mapping) -> dict:
         self._require_channel(principal, WRITE_CHANNELS)
         req = schemas.validate(schemas.resource_upload_request, body)
+        self._require_not_stopped()
         if req["media_type"] not in schemas.SUPPORTED_MEDIA_TYPES:
             raise GatewayError(ErrorCode.INVALID_REQUEST, "unsupported media type")
         limit = self.config.limits.max_source_bytes
@@ -227,8 +228,9 @@ class GatewayService:
         now_iso = self._now_iso()
         for ext in conn.execute("SELECT views_json FROM extractions WHERE scan_id = ?", (scan_id,)).fetchall():
             for view in _loads(ext["views_json"], []):
-                if view.get("storage_ref"):
-                    self.store.delete(view["storage_ref"], tenant)
+                for key in ("storage_ref", "source_map_ref"):
+                    if view.get(key):
+                        self.store.delete(view[key], tenant)
         conn.execute("UPDATE extractions SET views_json = '[]' WHERE scan_id = ?", (scan_id,))
         for res in conn.execute("SELECT task_output_ref FROM worker_results WHERE scan_id = ?", (scan_id,)).fetchall():
             if res["task_output_ref"]:
@@ -301,6 +303,17 @@ class GatewayService:
             "task_scope_version": row["scope_version"],
             "context_version": row["context_version"],
             "resource_ids": _loads(row["resource_ids_json"]),
+            # Server-owned disclosure constraints bound to this session.
+            "disclosure": [
+                {"resource_id": r["resource_id"], "label_id": r["label_id"], "disclosure": r["disclosure"]}
+                for r in self.db.query_all(
+                    "SELECT res.resource_id, res.label_id, l.disclosure FROM resources res "
+                    "JOIN labels l ON l.label_id = res.label_id WHERE res.tenant_id = ? AND res.owner_id = ? "
+                    "ORDER BY res.resource_id",
+                    (row["tenant_id"], row["owner_id"]),
+                )
+                if r["resource_id"] in _loads(row["resource_ids_json"])
+            ],
             "expires_at": row["expires_at"],
             "active": self._session_active(row),
         }
@@ -431,6 +444,7 @@ class GatewayService:
             return self.get_scan_status(principal, _loads(prior["response_json"])["scan_id"])
 
         self._require_runtime()
+        self._require_not_stopped()
         bindings = self._current_bindings(session)
         resource_ids = _loads(session["resource_ids_json"])
         now = self._now()
@@ -446,14 +460,15 @@ class GatewayService:
             conn.execute(
                 "INSERT INTO scans (scan_id, tenant_id, owner_id, task_session_id, task_scope_version, "
                 "context_version, policy_id, policy_version, policy_hash, resource_set_hash, resource_ids_json, "
-                "model_configuration_hash, roster_hash, context_hash, state, created_at, updated_at, deadline_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "model_configuration_hash, roster_hash, context_hash, state, required_checks_json, budget_json, "
+                "created_at, updated_at, deadline_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     scan_id, principal.tenant_id, principal.user_id, session["task_session_id"],
                     session["scope_version"], session["context_version"], policy.policy_id, policy.version,
                     policy.policy_hash, bindings["resource_set_hash"], _dumps(resource_ids),
                     bindings["model_configuration_hash"], bindings["roster_hash"], bindings["context_hash"],
-                    JobState.QUEUED.value, iso(now), iso(now),
+                    JobState.QUEUED.value, _dumps(["EXTRACTION"] + [r.value for r in INSPECTION_ROLES]),
+                    _dumps(self._budget()), iso(now), iso(now),
                     iso(after(now, self.config.limits.scan_deadline_seconds)),
                 ),
             )
@@ -464,6 +479,22 @@ class GatewayService:
             self._event(conn, scan_id, principal.tenant_id, "QUEUED")
         self._run_extraction(scan_id)
         return self.get_scan_status(principal, scan_id)
+
+    def _budget(self) -> dict:
+        limits = self.config.limits
+        return {
+            "scan_deadline_seconds": limits.scan_deadline_seconds,
+            "worker_lease_seconds": limits.worker_lease_seconds,
+            "worker_retries": limits.worker_retries,
+            "model_token_budget": limits.model_token_budget,
+            "max_findings": limits.max_findings,
+            "max_artifacts": limits.max_artifacts,
+            "max_artifact_chars": limits.max_artifact_chars,
+        }
+
+    @staticmethod
+    def _required_roles(scan) -> list[str]:
+        return [c for c in _loads(scan["required_checks_json"]) if c != "EXTRACTION"]
 
     def _scan(self, scan_id: str):
         return self.db.query_one("SELECT * FROM scans WHERE scan_id = ?", (scan_id,))
@@ -520,9 +551,8 @@ class GatewayService:
                         _dumps(assignment), self._now_iso(),
                     ),
                 )
-                token = self._new_token(conn, assignment_id, scan, extractor.worker_id)
             try:
-                raw = self.runtime.extract(dict(assignment), capability=token)
+                raw = self.runtime.extract(dict(assignment))
             except Exception as exc:
                 log.warning("extract_failed scan_id=%s error=%s", scan_id, type(exc).__name__)
                 self._fail(scan_id, ReasonCode.RUNTIME_UNAVAILABLE)
@@ -549,7 +579,7 @@ class GatewayService:
         if outcome.decision is not None:
             self._finalize(scan_id, outcome)
         else:
-            self._dispatch(scan_id, [r.value for r in INSPECTION_ROLES])
+            self._dispatch(scan_id, self._required_roles(scan))
 
     def _accept_extraction(self, scan, resource, assignment, raw) -> tuple[str, str | None, list, list]:
         error = (ExtractionStatus.ERROR.value, None, [], [])
@@ -574,6 +604,7 @@ class GatewayService:
                 if not (0 <= vs <= ve <= len(text) and 0 <= os_ <= oe <= resource["size_bytes"]):
                     return error
             ref = self.store.put(scan["tenant_id"], "view", text.encode("utf-8"))
+            map_ref = self.store.put(scan["tenant_id"], "sourcemap", _dumps(view["source_map"]).encode("utf-8"))
             views.append(
                 {
                     "view_id": view["view_id"],
@@ -581,6 +612,7 @@ class GatewayService:
                     "view_hash": view["view_hash"],
                     "length": len(text),
                     "storage_ref": ref,
+                    "source_map_ref": map_ref,
                 }
             )
         status = result["status"]
@@ -594,7 +626,7 @@ class GatewayService:
         if self.runtime is None:
             self._fail(scan_id, ReasonCode.RUNTIME_UNAVAILABLE)
             return
-        limits = self.config.limits
+        budget = _loads(scan["budget_json"])
         now = self._now()
         deadline = parse_iso(scan["deadline_at"])
         resources = []
@@ -612,7 +644,7 @@ class GatewayService:
                     ],
                 }
             )
-        assignments, capabilities = [], {}
+        assignments = []
         with self.db.transaction() as conn:
             if not self._set_state(conn, scan_id, JobState.INSPECTING, [JobState.EXTRACTING, JobState.INSPECTING]):
                 return
@@ -641,14 +673,14 @@ class GatewayService:
                     "model_configuration_hash": scan["model_configuration_hash"],
                     "resources": resources,
                     "limits": {
-                        "max_findings": limits.max_findings,
-                        "max_artifacts": limits.max_artifacts,
-                        "max_artifact_chars": limits.max_artifact_chars,
-                        "model_token_budget": limits.model_token_budget,
+                        "max_findings": budget["max_findings"],
+                        "max_artifacts": budget["max_artifacts"],
+                        "max_artifact_chars": budget["max_artifact_chars"],
+                        "model_token_budget": budget["model_token_budget"],
                     },
                     "deadline": scan["deadline_at"],
                 }
-                lease = min(after(now, limits.worker_lease_seconds), deadline)
+                lease = min(after(now, budget["worker_lease_seconds"]), deadline)
                 conn.execute(
                     "INSERT INTO assignments VALUES (?, ?, ?, 'INSPECTION', ?, ?, ?, ?, ?, 'ASSIGNED', ?, ?, ?)",
                     (
@@ -656,11 +688,10 @@ class GatewayService:
                         entry.prompt_version, attempt, iso(lease), _dumps(payload), iso(now),
                     ),
                 )
-                capabilities[assignment_id] = self._new_token(conn, assignment_id, scan, entry.worker_id)
                 assignments.append(payload)
                 self._event(conn, scan_id, scan["tenant_id"], "DISPATCHED", assignment_id=assignment_id, role=role, attempt=attempt)
         try:
-            receipts = self.runtime.dispatch([dict(a) for a in assignments], capabilities=dict(capabilities))
+            receipts = self.runtime.dispatch([dict(a) for a in assignments])
         except Exception as exc:
             log.warning("dispatch_failed scan_id=%s error=%s", scan_id, type(exc).__name__)
             self._fail(scan_id, ReasonCode.RUNTIME_UNAVAILABLE)
@@ -884,11 +915,11 @@ class GatewayService:
                 for f in result["findings"]
             ]
             conn.execute(
-                "INSERT INTO worker_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO worker_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     assignment["assignment_id"], scan["scan_id"], role, result["nonce"], digest,
                     result["inspection_status"], _dumps(findings), _dumps(result.get("telemetry_event_ids", [])),
-                    output_ref, int(answer_mismatch), now_iso,
+                    output_ref, _dumps(result.get("coverage_limits", [])), int(answer_mismatch), now_iso,
                 ),
             )
             conn.execute("INSERT INTO seen_nonces VALUES (?, ?, ?, ?)", (result["nonce"], assignment["assignment_id"], digest, now_iso))
@@ -1005,8 +1036,12 @@ class GatewayService:
             # Late authoritative evidence downgrades an earlier decision.
             with self.db.transaction() as conn:
                 conn.execute(
-                    "UPDATE scans SET decision = ?, reason_codes_json = ?, updated_at = ? WHERE scan_id = ?",
-                    (Decision.QUARANTINE.value, _dumps([ReasonCode.VERIFIED_FORBIDDEN_ACTION.value]), self._now_iso(), scan_id),
+                    "UPDATE scans SET decision = ?, reason_codes_json = ?, updated_at = ?, decision_record_json = ? "
+                    "WHERE scan_id = ?",
+                    (
+                        Decision.QUARANTINE.value, _dumps([ReasonCode.VERIFIED_FORBIDDEN_ACTION.value]), self._now_iso(),
+                        _dumps(self._decision_record(conn, scan, Decision.QUARANTINE.value)), scan_id,
+                    ),
                 )
                 conn.execute(
                     "UPDATE review_exceptions SET revoked_at = ? WHERE scan_id = ? AND revoked_at IS NULL",
@@ -1027,27 +1062,34 @@ class GatewayService:
         )
         total_chars = sum(v["length"] for e in extractions for v in _loads(e["views_json"], []))
 
+        required = self._required_roles(scan)
+        retries = _loads(scan["budget_json"])["worker_retries"]
         results = {}
         for row in self.db.query_all("SELECT * FROM worker_results WHERE scan_id = ?", (scan_id,)):
             categories = frozenset(f["category"] for f in _loads(row["findings_json"], []))
+            run_events = {
+                e["event_id"]
+                for e in self.db.query_all("SELECT event_id FROM collector_events WHERE run_id = ?", (row["assignment_id"],))
+            }
             results[row["role"]] = RoleResult(
                 status=InspectionStatus(row["inspection_status"]),
                 categories=categories,
                 has_task_output=row["task_output_ref"] is not None,
                 answer_mismatch=bool(row["answer_mismatch"]),
+                contradicts_telemetry=bool(run_events - set(_loads(row["telemetry_json"], []))),
             )
         now = self._now()
         exhausted = set()
-        for role in INSPECTION_ROLES:
-            if role.value in results:
+        for role in required:
+            if role in results:
                 continue
             rows = self.db.query_all(
                 "SELECT state, lease_expires_at FROM assignments WHERE scan_id = ? AND role = ? AND kind = 'INSPECTION'",
-                (scan_id, role.value),
+                (scan_id, role),
             )
             live = any(r["state"] in LIVE_ASSIGNMENT_STATES and parse_iso(r["lease_expires_at"]) >= now for r in rows)
-            if rows and not live and len(rows) >= 1 + self.config.limits.worker_retries:
-                exhausted.add(role.value)
+            if rows and not live and len(rows) >= 1 + retries:
+                exhausted.add(role)
         forbidden = self.db.query_one(
             "SELECT 1 FROM collector_events WHERE scan_id = ? AND effective_policy_check = ?",
             (scan_id, PolicyCheck.FORBIDDEN.value),
@@ -1057,7 +1099,7 @@ class GatewayService:
                 extraction_statuses=statuses,
                 unsupported_relevant=unsupported_relevant,
                 extraction_limit_exceeded=total_chars > self.config.limits.max_extracted_chars,
-                required_roles=tuple(r.value for r in INSPECTION_ROLES),
+                required_roles=tuple(required),
                 results=results,
                 exhausted_roles=frozenset(exhausted),
                 deadline_passed=now >= parse_iso(scan["deadline_at"]),
@@ -1089,10 +1131,12 @@ class GatewayService:
                 (scan_id,),
             ).rowcount
             conn.execute(
-                "UPDATE scans SET decision = ?, reason_codes_json = ?, decided_at = ?, decision_expires_at = ? WHERE scan_id = ?",
+                "UPDATE scans SET decision = ?, reason_codes_json = ?, decided_at = ?, decision_expires_at = ?, "
+                "decision_record_json = ? WHERE scan_id = ?",
                 (
                     outcome.decision.value, _dumps(list(outcome.reason_codes)), iso(now),
-                    iso(after(now, self.config.retention.decision_seconds)), scan_id,
+                    iso(after(now, self.config.retention.decision_seconds)),
+                    _dumps(self._decision_record(conn, scan, outcome.decision.value)), scan_id,
                 ),
             )
             conn.execute("UPDATE job_tokens SET revoked_at = ? WHERE scan_id = ? AND revoked_at IS NULL", (iso(now), scan_id))
@@ -1105,6 +1149,41 @@ class GatewayService:
             self._event(conn, scan_id, scan["tenant_id"], "DECIDED", decision=outcome.decision.value, reasons=list(outcome.reason_codes))
         if outstanding:
             self._cancel_runtime(scan_id)
+
+    def _completed_checks(self, conn, scan) -> list[str]:
+        scan_id = scan["scan_id"]
+        extractions = conn.execute("SELECT status FROM extractions WHERE scan_id = ?", (scan_id,)).fetchall()
+        completed = []
+        if extractions and len(extractions) == len(_loads(scan["resource_ids_json"])) and all(
+            e["status"] == ExtractionStatus.COMPLETE.value for e in extractions
+        ):
+            completed.append("EXTRACTION")
+        completed += [
+            r["role"]
+            for r in conn.execute(
+                "SELECT role, inspection_status FROM worker_results WHERE scan_id = ? ORDER BY role", (scan_id,)
+            ).fetchall()
+            if r["inspection_status"] == InspectionStatus.COMPLETE.value
+        ]
+        return completed
+
+    def _decision_record(self, conn, scan, decision: str) -> dict:
+        """Durable decision record (master section 10): policy version,
+        completed checks, decision and the evidence IDs it rests on."""
+        evidence_ids = sorted(
+            {e for r in conn.execute("SELECT findings_json FROM worker_results WHERE scan_id = ?", (scan["scan_id"],))
+             for f in _loads(r["findings_json"], []) for e in f["evidence_ids"]}
+            | {r["evidence_id"] for r in conn.execute(
+                "SELECT evidence_id FROM collector_events WHERE scan_id = ? AND effective_policy_check = ?",
+                (scan["scan_id"], PolicyCheck.FORBIDDEN.value))}
+        )
+        return {
+            "policy_id": scan["policy_id"],
+            "policy_version": scan["policy_version"],
+            "decision": decision,
+            "completed_checks": self._completed_checks(conn, scan),
+            "evidence_ids": evidence_ids,
+        }
 
     def _build_output(self, scan) -> tuple[str, str, list[str]] | None:
         row = self.db.query_one(
@@ -1173,19 +1252,20 @@ class GatewayService:
                 )
                 self._event(conn, scan_id, scan["tenant_id"], "LEASE_EXPIRED", assignment_id=row["assignment_id"])
         retry = []
+        retries = _loads(scan["budget_json"])["worker_retries"]
         if now < deadline:
             done = {r["role"] for r in self.db.query_all("SELECT role FROM worker_results WHERE scan_id = ?", (scan_id,))}
-            for role in INSPECTION_ROLES:
-                if role.value in done:
+            for role in self._required_roles(scan):
+                if role in done:
                     continue
                 rows = self.db.query_all(
                     "SELECT state FROM assignments WHERE scan_id = ? AND role = ? AND kind = 'INSPECTION'",
-                    (scan_id, role.value),
+                    (scan_id, role),
                 )
                 if any(r["state"] in LIVE_ASSIGNMENT_STATES for r in rows):
                     continue
-                if len(rows) < 1 + self.config.limits.worker_retries:
-                    retry.append(role.value)
+                if len(rows) < 1 + retries:
+                    retry.append(role)
         if retry:
             self._dispatch(scan_id, retry)
         self._try_decide(scan_id)
@@ -1213,12 +1293,8 @@ class GatewayService:
         results = self.db.query_all(
             "SELECT * FROM worker_results WHERE scan_id = ? ORDER BY role", (scan_id,)
         )
-        completed = []
-        if extractions and len(extractions) == len(_loads(scan["resource_ids_json"])) and all(
-            e["status"] == ExtractionStatus.COMPLETE.value for e in extractions
-        ):
-            completed.append("EXTRACTION")
-        completed += [r["role"] for r in results if r["inspection_status"] == InspectionStatus.COMPLETE.value]
+        with self.db.transaction() as conn:
+            completed = self._completed_checks(conn, scan)
         reasons = _loads(scan["reason_codes_json"], [])
         output = self.db.query_one("SELECT * FROM outputs WHERE scan_id = ? AND deleted_at IS NULL", (scan_id,))
         eligible = (
@@ -1234,7 +1310,7 @@ class GatewayService:
             "state": scan["state"],
             "decision": scan["decision"],
             "reason_codes": reasons,
-            "required_checks": ["EXTRACTION"] + [r.value for r in INSPECTION_ROLES],
+            "required_checks": _loads(scan["required_checks_json"]),
             "completed_checks": completed,
             "coverage": {
                 "extraction": [
@@ -1440,7 +1516,27 @@ class GatewayService:
 
     # ------------------------------------------------- worker capability API
 
+    def issue_job_capability(self, assignment_id: str) -> str:
+        """Called in process by B's launcher to provision a worker's
+        short-lived resource capability over a private channel. Re-issuing
+        revokes earlier capabilities for the assignment. Not an HTTP route."""
+        self._require_not_stopped()
+        assignment = self.db.query_one("SELECT * FROM assignments WHERE assignment_id = ?", (assignment_id,))
+        if assignment is None:
+            raise GatewayError(ErrorCode.NOT_FOUND, "assignment not found")
+        scan = self._scan(assignment["scan_id"])
+        live = assignment["state"] in LIVE_ASSIGNMENT_STATES and parse_iso(assignment["lease_expires_at"]) >= self._now()
+        if not live or scan["state"] not in (JobState.EXTRACTING.value, JobState.INSPECTING.value):
+            raise GatewayError(ErrorCode.FORBIDDEN, "assignment not live")
+        with self.db.transaction() as conn:
+            conn.execute(
+                "UPDATE job_tokens SET revoked_at = ? WHERE assignment_id = ? AND revoked_at IS NULL",
+                (self._now_iso(), assignment_id),
+            )
+            return self._new_token(conn, assignment_id, scan, assignment["worker_id"])
+
     def _token_row(self, capability: str, verified_identity: Mapping):
+        self._require_not_stopped()
         identity = schemas.validate(schemas.worker_identity, dict(verified_identity), "$identity")
         if not isinstance(capability, str) or not capability:
             raise GatewayError(ErrorCode.UNAUTHENTICATED, "missing capability")
@@ -1486,6 +1582,48 @@ class GatewayService:
         if text is None:
             raise GatewayError(ErrorCode.NOT_FOUND, "view unavailable")
         return text
+
+    # ------------------------------------------------------ emergency controls
+
+    def emergency_stopped(self) -> bool:
+        row = self.db.query_one("SELECT value FROM controls WHERE name = 'emergency_stop'")
+        return row is not None and row["value"] == "1"
+
+    def _require_not_stopped(self) -> None:
+        if self.emergency_stopped():
+            raise GatewayError(ErrorCode.SERVICE_UNAVAILABLE, "emergency stop active", retryable=False)
+
+    def emergency_stop(self) -> dict:
+        """Operator control (not an HTTP route): stop retrieval and new work,
+        cancel queued and running jobs, revoke job capabilities and pending
+        actions. Already-completed effects are not undone."""
+        now_iso = self._now_iso()
+        active = self.db.query_all(
+            "SELECT * FROM scans WHERE state IN (?, ?, ?)", tuple(s.value for s in ACTIVE_JOB_STATES)
+        )
+        with self.db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO controls VALUES ('emergency_stop', '1', ?) "
+                "ON CONFLICT(name) DO UPDATE SET value = '1', updated_at = excluded.updated_at",
+                (now_iso,),
+            )
+            for scan in active:
+                self._terminate(conn, scan, JobState.CANCELED, [ReasonCode.EMERGENCY_STOP.value])
+            conn.execute("UPDATE job_tokens SET revoked_at = ? WHERE revoked_at IS NULL", (now_iso,))
+            pending = conn.execute(
+                "SELECT DISTINCT task_session_id FROM actions WHERE state IN (?, ?)",
+                (ActionState.PROPOSED.value, ActionState.CONFIRMED.value),
+            ).fetchall()
+            for row in pending:
+                self.actions.invalidate_session_actions(conn, row["task_session_id"], ActionState.CANCELED)
+        for scan in active:
+            self._cancel_runtime(scan["scan_id"])
+        log.warning("emergency_stop scans_canceled=%d", len(active))
+        return {"emergency_stop": True, "scans_canceled": len(active)}
+
+    def emergency_resume(self) -> dict:
+        self.db.execute("UPDATE controls SET value = '0', updated_at = ? WHERE name = 'emergency_stop'", (self._now_iso(),))
+        return {"emergency_stop": False}
 
     # -------------------------------------------------------------- retention
 

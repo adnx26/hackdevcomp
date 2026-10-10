@@ -82,6 +82,9 @@ CREATE TABLE IF NOT EXISTS scans (
     state TEXT NOT NULL,
     decision TEXT,
     reason_codes_json TEXT NOT NULL DEFAULT '[]',
+    required_checks_json TEXT NOT NULL,
+    budget_json TEXT NOT NULL,
+    decision_record_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     deadline_at TEXT NOT NULL,
@@ -139,6 +142,7 @@ CREATE TABLE IF NOT EXISTS worker_results (
     findings_json TEXT NOT NULL,
     telemetry_json TEXT NOT NULL,
     task_output_ref TEXT,
+    coverage_limits_json TEXT NOT NULL DEFAULT '[]',
     answer_mismatch INTEGER NOT NULL DEFAULT 0,
     received_at TEXT NOT NULL
 );
@@ -260,6 +264,12 @@ CREATE TABLE IF NOT EXISTS idempotency (
     response_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (scope, idem_key)
+);
+
+CREATE TABLE IF NOT EXISTS controls (
+    name TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS dummy_mailbox (

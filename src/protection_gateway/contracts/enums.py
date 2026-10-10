@@ -141,6 +141,8 @@ class ReasonCode(_StrEnum):
     CANCELED_BY_USER = "CANCELED_BY_USER"
     REJECTED_BY_USER = "REJECTED_BY_USER"
     RESOURCE_DELETED = "RESOURCE_DELETED"
+    CONTRADICTORY_EVIDENCE = "CONTRADICTORY_EVIDENCE"
+    EMERGENCY_STOP = "EMERGENCY_STOP"
 
 
 # A recorded read-only review exception is eligible only when every

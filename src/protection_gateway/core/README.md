@@ -25,18 +25,22 @@ auth = Authenticator(config, service.db, service.clock, service.ids)
 app = make_wsgi_app(service, auth)
 service.recover(startup=True)   # interrupted extractions fail closed
 # periodically: service.recover(); service.run_retention()
+# operator controls: service.emergency_stop() / service.emergency_resume()
 ```
 
 - `runtime_callbacks` implements `core.runtime_api.RuntimeCallbacks`, which
-  has `extract(assignment, *, capability)`,
-  `dispatch(assignments, *, capabilities)` and `cancel(scan_id)`. If
+  has exactly the §15 signatures: `extract(extraction_assignment)`,
+  `dispatch(inspection_assignments)` and `cancel(scan_id)`. If
   `runtime=None` or the roster is incomplete, `POST /v1/scans` returns
   `SERVICE_UNAVAILABLE`. If a callback raises, the scan moves to `FAILED`
   with `RUNTIME_UNAVAILABLE`. Neither case releases anything.
-- Job capabilities are short-lived opaque tokens. They expire at the earlier
-  of 5 minutes or the scan deadline, are revoked on completion, cancel,
-  decision or failure, and only their hashes are stored. B passes them to
-  workers privately. Workers read inputs through
+- Job capabilities are short-lived opaque tokens. B's launcher provisions
+  one per assignment by calling `service.issue_job_capability(assignment_id)`
+  and passes it to the worker privately; it never travels in an assignment
+  message. Re-issuing revokes the previous token. Tokens expire at the
+  earlier of 5 minutes or the scan deadline, are revoked on completion,
+  cancel, decision, failure or emergency stop, and only their hashes are
+  stored. Workers read inputs through
   `service.read_assigned_original(capability, identity, resource_id)` for
   extraction and `service.read_assigned_view(capability, identity,
   resource_id, view_id)` for inspection. `service.validate_job_token` checks
@@ -97,9 +101,27 @@ These endpoints and fields are in addition to the §15 table:
 - The scan status adds `findings`, `collector_evidence` and
   `review.{eligible, result_digest}`. All of these are IDs, enums and
   digests only.
+- The task-session view adds `disclosure` (the server-owned label for each
+  resource).
+- `service.issue_job_capability(assignment_id)` lets B provision worker
+  capabilities.
+- New reason codes `CONTRADICTORY_EVIDENCE` (collector events for a run that
+  the behavior tester's telemetry omitted) and `EMERGENCY_STOP`.
 - `service.advance_task_context`: lets D record a relevant change in
   conversation context, which invalidates cached decisions and pending
   approvals.
+
+## Emergency controls
+
+`service.emergency_stop()` is an operator control, not an HTTP route. It:
+
+- blocks uploads, new scans, capability issue and worker reads
+- cancels queued and running scans with `EMERGENCY_STOP`
+- revokes every job capability
+- cancels pending actions
+
+Effects that already happened aren't undone. `service.emergency_resume()`
+lifts the stop.
 
 ## Disabled or not provided
 

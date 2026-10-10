@@ -38,6 +38,9 @@ class RoleResult:
     categories: frozenset[str] = frozenset()
     has_task_output: bool = False
     answer_mismatch: bool = False
+    # Authoritative collector events for this run that the worker's
+    # telemetry report omitted.
+    contradicts_telemetry: bool = False
 
 
 @dataclass
@@ -104,6 +107,8 @@ def decide(inputs: DecisionInputs) -> DecisionOutcome:
             reasons.append(ReasonCode.SUSPICIOUS_UNCORROBORATED.value)
         if FindingCategory.ANSWER_MISMATCH in result.categories or result.answer_mismatch:
             reasons.append(ReasonCode.ANSWER_MISMATCH.value)
+        if result.contradicts_telemetry:
+            reasons.append(ReasonCode.CONTRADICTORY_EVIDENCE.value)
 
     behavior = inputs.results.get(WorkerRole.BEHAVIOR_TESTER.value)
     if behavior is not None and behavior.status == InspectionStatus.COMPLETE and not behavior.has_task_output:
