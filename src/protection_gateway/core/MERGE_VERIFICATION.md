@@ -1,4 +1,4 @@
-# A merge gate: not yet passed
+# A merge gate: passed
 
 Reviewed on October 10, 2026 against `docs/teammate-a-gateway.md` and the
 shared requirements in `docs/system-design.md`, especially sections 6–11
@@ -69,8 +69,8 @@ the existing approval revocation; these regression checks also pass.
 | Unknown-outcome reconciliation without resend | action executor protocol and reconciliation; action suite | Deterministic pass; no real provider |
 | Evidence access, no raw public status/logs, encrypted-volume prerequisite, cleanup | evidence store/service and retention; privacy and new regression suites | Deterministic pass; deployment encryption verification remains B's responsibility |
 | Emergency controls withhold retrieval and revoke pending work | emergency and result paths; spec alignment and new regression suites | Deterministic pass |
-| Canonical fixture publication and actual B/D consumer review | committed fixture suite and handoff README | Independent B-facing review passed; final D review of remote head pending |
-| Shared-contract additions proposed in master/affected assignment docs and reviewed | master §15 and affected A/B/C/D appendices; generated canonical examples | Independent B/C-facing review passed; D final review pending |
+| Canonical fixture publication and actual B/D consumer review | committed fixture suite and handoff README | Independent B-facing and D remote-head review passed |
+| Shared-contract additions proposed in master/affected assignment docs and reviewed | master §15 and affected A/B/C/D appendices; generated canonical examples | Independent B/C-facing and D shared-document review passed |
 | Backup and immutable-log expiry defined together with B | core README explicitly says still to be agreed | Independent B-facing policy approval passed; B must verify deployment inventory before activation |
 
 ## Additional independent review repairs
@@ -96,20 +96,23 @@ the existing approval revocation; these regression checks also pass.
 - Source and derived-content access expires independently of cleanup. Resource,
   session and label metadata cleanup is anchored to creation, never deletion.
 
-## Review provenance and remaining gate
+## Completed A reviews and later deployment requirements
 
 The independent B-facing runtime reviewer approved the exact amended master,
 A/B appendices, capability/result/collector handoff and retention proposal,
 then verified all 11 focused runtime regression tests. This is role review,
-not original B-author approval or deployed-host verification. The C-facing
-independent reviewer checks only A's extraction/source contract and C appendix,
-without verifying or advancing to C's implementation.
+not original B-author approval or deployed-host verification. The independent C-facing reviewer approved A's extraction/source contract
+and C appendix, including Unicode signed amounts, without verifying or
+advancing to C's implementation.
 
 The existing **Implement design doc D** chat reviewed A's public/authentication
 contract, reproduced four gaps and an exception-insertion race, and supplied
 an explicit conditional session recovery contract. Those fixes, fixtures and
-shared appendices are now concrete; final D approval is tied to the committed
-remote PR head and remains pending at this document revision.
+shared appendices are now concrete; D approved remote implementation head `4476b2d` and the exact shared contracts.
+It independently ran all 167 tests on Python 3.9/3.12, the four original probes,
+seven exception-insertion race cases and 20 Unicode-sign cases. No D-facing
+blocker remained. Final review report is attached to the PR handoff. This
+bookkeeping revision changes documentation only; implementation is unchanged.
 
 A/B define evidence ≤24 hours, metadata/logs ≤seven days from creation, no
 initial demo backups/snapshots/immutable exports, and original-expiry bounds
@@ -123,5 +126,6 @@ encryption, live model, SLIM/host isolation or full workflow pass is claimed.
 A's completion uses standard-library runtime doubles and fails closed without
 B; later PRs require independent verification after A lands.
 
-**Do not merge A or advance to B until final D review and verification of the
-remote A head pass.**
+**A's design, deterministic tests, canonical fixtures and required role-facing
+handoff reviews pass. Merge only the verified remote head; then begin B's
+separate design gate.**

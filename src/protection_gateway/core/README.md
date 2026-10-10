@@ -16,7 +16,7 @@ command.
 
 The merge verification repairs missed design requirements and passes 13
 contract / 154 core tests. Shared baseline updates and the A/B retention policy now have independent
-role review; final D review of the committed remote head remains pending. See
+role review; final D review approved the committed implementation and shared contracts. See
 [the requirement checklist and evidence](MERGE_VERIFICATION.md); passing
 local tests alone is not permission to merge.
 
