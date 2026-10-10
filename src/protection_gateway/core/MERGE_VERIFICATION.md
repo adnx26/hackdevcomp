@@ -30,6 +30,11 @@ Only A-owned implementation, test, and handoff paths were changed.
 - Invoice validation previously accepted `250.00` from a subspan of
   `$1,250.00`. Amount references must contain a complete numeric token whose
   decimal value matches the reported amount; mismatches produce REVIEW.
+- Action validation previously allowed an effect if approval expiry or a
+  collector-backed quarantine happened between the initial checks and the
+  write transaction. Execution now revalidates the active action, stop state,
+  policy/context and source inspection under the transaction, then claims
+  only a still-unexpired approval before recording the effect.
 
 ## Deterministic evidence
 
@@ -42,9 +47,10 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:. python3 -m unittest discover -s tests
 git diff --check
 ```
 
-Results: **13 contract tests and 114 core tests pass**, including 12 added
+Results: **13 contract tests and 116 core tests pass**, including 14 added
 design regressions in `tests/core/test_design_merge_gates.py`. The original
-13/102 suites passed despite the reproduced failures. Cancellation and
+13/102 suites passed despite the reproduced failures. These suites also pass
+with Python 3.12. Cancellation and
 task-context changes between validation and execution prevent effects via
 the existing approval revocation; these regression checks also pass.
 
@@ -57,7 +63,7 @@ the existing approval revocation; these regression checks also pass.
 | Validate worker identity, assignment, bindings, coverage, nonce and evidence | result acceptance and capability paths; worker results, tenancy, fixture and new regression suites | Deterministic pass |
 | Ordinary-code decisions; authoritative collector evidence; no receipt-as-result | `decisions.py`, collector and finalization paths; decision, collector and spec alignment suites | Deterministic pass |
 | Active task-bound result; private server-owned labels; eligible read-only exception | result/review methods; review/binding, worker and fixture suites | Deterministic pass |
-| Exact browser confirmation, CSRF, one-use approval, atomic simulated effect | `actions.py`, `http.py`; action and HTTP suites | Deterministic pass |
+| Exact browser confirmation, CSRF, one-use approval, atomic simulated effect | `actions.py`, `http.py`; action/HTTP suites plus expiry/quarantine race regressions | Deterministic pass |
 | Unknown-outcome reconciliation without resend | action executor protocol and reconciliation; action suite | Deterministic pass; no real provider |
 | Evidence access, no raw public status/logs, encrypted-volume prerequisite, cleanup | evidence store/service and retention; privacy and new regression suites | Deterministic pass; deployment encryption verification remains B's responsibility |
 | Emergency controls withhold retrieval and revoke pending work | emergency and result paths; spec alignment and new regression suites | Deterministic pass |

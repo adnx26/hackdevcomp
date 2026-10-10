@@ -333,9 +333,19 @@ class ActionGate:
 
         effect_id = self.s.ids.new("fx")
         with self.s.db.transaction() as conn:
+            # Serialize final authorization with the dummy effect. Earlier
+            # validation may have raced with quarantine, expiry or a stop.
+            row = self.s._owned("actions", "action_id", action_id, principal)
+            self.s._require_not_stopped()
+            if row["state"] != ActionState.CONFIRMED.value:
+                raise GatewayError(ErrorCode.CONTEXT_CHANGED, "action no longer executable")
+            self._revalidate(principal, row)
+            arguments = self._arguments(row)
+            now = self.s._now()
             claimed = conn.execute(
-                "UPDATE approvals SET used_at = ? WHERE approval_id = ? AND used_at IS NULL AND revoked_at IS NULL",
-                (iso(now), approval["approval_id"]),
+                "UPDATE approvals SET used_at = ? WHERE approval_id = ? AND used_at IS NULL AND revoked_at IS NULL "
+                "AND expires_at > ? AND digest = ?",
+                (iso(now), approval["approval_id"], iso(now), row["digest"]),
             ).rowcount
             if claimed != 1:
                 raise GatewayError(ErrorCode.APPROVAL_REQUIRED, "approval already used")
@@ -346,7 +356,7 @@ class ActionGate:
                     "tenant_id": row["tenant_id"],
                     "owner_id": row["owner_id"],
                     "effect_id": effect_id,
-                    "arguments": self._arguments(row),
+                    "arguments": arguments,
                     "attachments": json.loads(row["attachments_json"]),
                     "digest": row["digest"],
                     "now": iso(now),

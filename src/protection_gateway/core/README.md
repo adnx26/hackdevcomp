@@ -15,7 +15,7 @@ Once B's root package setup lands, switch to B's agreed environment and test
 command.
 
 The merge verification repairs missed design requirements and passes 13
-contract / 114 core tests. Required B/D contract review, shared baseline
+contract / 116 core tests. Required B/D contract review, shared baseline
 updates, and the A/B backup/log expiry agreement remain outstanding. See
 [the requirement checklist and evidence](MERGE_VERIFICATION.md); passing
 local tests alone is not permission to merge.

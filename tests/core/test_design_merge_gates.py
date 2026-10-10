@@ -5,7 +5,7 @@ import unittest
 
 from protection_gateway.contracts.errors import GatewayError
 from protection_gateway.contracts.canonical import sha256_hex
-from tests.core.support import Harness
+from tests.core.support import COLLECTOR, Harness
 
 
 class DesignMergeGates(unittest.TestCase):
@@ -179,6 +179,35 @@ class DesignMergeGates(unittest.TestCase):
             self.h.service.get_action(ui, action["action_id"])
         with self.assertRaises(GatewayError):
             self.h.service.execute_simulated_action(self.p, action["action_id"], {"contract_version": "v1"}, "deleted-source")
+        self.assertEqual(self.h.service.db.query_all("SELECT * FROM dummy_mailbox"), [])
+
+    def test_expiry_during_validation_prevents_effect(self):
+        _, _, action = self.send_action()
+        gate = self.h.service.actions
+        original = gate._revalidate
+
+        def expire_after_validation(principal, row):
+            original(principal, row)
+            self.h.clock.advance(self.h.config.retention.approval_seconds + 1)
+
+        gate._revalidate = expire_after_validation
+        with self.assertRaises(GatewayError):
+            self.h.service.execute_simulated_action(self.p, action["action_id"], {"contract_version": "v1"}, "expiry-race")
+        self.assertEqual(self.h.service.db.query_all("SELECT * FROM dummy_mailbox"), [])
+
+    def test_quarantine_during_validation_prevents_effect(self):
+        _, ts, action = self.send_action()
+        gate = self.h.service.actions
+        original = gate._revalidate
+        sid = self.h.service.db.query_one("SELECT scan_id FROM scans WHERE task_session_id = ?", (ts["task_session_id"],))["scan_id"]
+
+        def quarantine_after_validation(principal, row):
+            original(principal, row)
+            self.h.service.record_collector_event(COLLECTOR, self.h.collector_event(sid, operation="fetch_url"))
+
+        gate._revalidate = quarantine_after_validation
+        with self.assertRaises(GatewayError):
+            self.h.service.execute_simulated_action(self.p, action["action_id"], {"contract_version": "v1"}, "quarantine-race")
         self.assertEqual(self.h.service.db.query_all("SELECT * FROM dummy_mailbox"), [])
 
 
