@@ -1,0 +1,12 @@
+{
+  "argument_digest": "2e72b602c8e1dc11c485f3aa2e416369e9cf434bf4e0b4393bd8681f293b8347",
+  "attempted_outcome": "ALLOWED",
+  "contract_version": "v1",
+  "event_id": "ce-scan_0004-0",
+  "operation": "read_selected",
+  "policy_check": "PERMITTED",
+  "run_id": "ia_0009",
+  "scan_id": "scan_0004",
+  "sequence": 0,
+  "timestamp": "2026-10-10T12:00:01Z"
+}

@@ -1,0 +1,42 @@
+{
+  "assignment_id": "ia_0007",
+  "attempt": 1,
+  "context_hash": "7d842a9038216dfa2a14e3477d16764b93a62d9b9dda9bd9b154935459ce1078",
+  "contract_version": "v1",
+  "deadline": "2026-10-10T12:01:00Z",
+  "limits": {
+    "max_artifact_chars": 8000,
+    "max_artifacts": 20,
+    "max_findings": 50,
+    "model_token_budget": 20000
+  },
+  "model_configuration_hash": "63ad0100886734806bc535a6888090e82e19d5f90792bbac63f44e32593c3c29",
+  "policy": {
+    "policy_hash": "5037744bfb4d3fe09f1c8be37ceba43b73a14d7ab4f090e4b1cac98d817b0b6e",
+    "policy_id": "extract_invoice",
+    "policy_version": "1"
+  },
+  "resource_set_hash": "18f058159d6ee556800d240cc510a48e6b5bcec69ac65280fb63c35335866bf1",
+  "resources": [
+    {
+      "original_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d",
+      "resource_id": "res_0001",
+      "views": [
+        {
+          "length": 76,
+          "view_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d",
+          "view_id": "visible"
+        }
+      ]
+    }
+  ],
+  "scan_id": "scan_0004",
+  "task_scope_version": 1,
+  "task_session_id": "ts_0003",
+  "worker": {
+    "build_version": "i-1.0",
+    "prompt_version": "ip-1",
+    "role": "INSTRUCTION_INSPECTOR",
+    "worker_id": "w-instruction"
+  }
+}

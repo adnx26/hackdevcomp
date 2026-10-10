@@ -1,0 +1,22 @@
+{
+  "auth": "browser session + X-CSRF-Token",
+  "request": {
+    "action": "ALLOW_READ_ONLY",
+    "contract_version": "v1",
+    "reason": "Known sender; read-only summary only.",
+    "result_digest": "3aad4186f17df691dce59c7f71faf6b1789b0e0cb9c914f3c2aacf1f91fc1c1b"
+  },
+  "response": {
+    "contract_version": "v1",
+    "data": {
+      "decision": "REVIEW",
+      "exception_id": "rx_0016",
+      "expires_at": "2026-10-10T13:00:00Z",
+      "read_only": true,
+      "result_digest": "3aad4186f17df691dce59c7f71faf6b1789b0e0cb9c914f3c2aacf1f91fc1c1b",
+      "review": "ALLOW_READ_ONLY",
+      "scan_id": "scan_0006"
+    }
+  },
+  "response_status": 200
+}

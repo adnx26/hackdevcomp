@@ -1,0 +1,14 @@
+{
+  "assignment_id": "xa_0005",
+  "attempt": 1,
+  "contract_version": "v1",
+  "deadline": "2026-10-10T12:01:00Z",
+  "limits": {
+    "max_extracted_chars": 100000,
+    "max_source_bytes": 1048576
+  },
+  "media_type": "text/plain",
+  "original_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d",
+  "resource_id": "res_0001",
+  "scan_id": "scan_0004"
+}

@@ -1,0 +1,13 @@
+{
+  "auth": "human demo bearer (test credential only)",
+  "cookie_attributes": "HttpOnly; SameSite=Strict; Secure in HTTPS deployment",
+  "response": {
+    "contract_version": "v1",
+    "data": {
+      "csrf_token": "secret0002xxxxxxxxxxxxxxxx",
+      "expires_at": "2026-10-10T20:00:00Z",
+      "user_id": "alice"
+    }
+  },
+  "response_status": 201
+}

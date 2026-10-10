@@ -1,0 +1,17 @@
+{
+  "auth": "existing cookie only; no Authorization header",
+  "cache_control": "no-store",
+  "expiry_extended": false,
+  "headers": {
+    "X-PG-Session-Resume": "1"
+  },
+  "response": {
+    "contract_version": "v1",
+    "data": {
+      "csrf_token": "secret0003xxxxxxxxxxxxxxxx",
+      "expires_at": "2026-10-10T20:00:00Z",
+      "user_id": "alice"
+    }
+  },
+  "response_status": 200
+}

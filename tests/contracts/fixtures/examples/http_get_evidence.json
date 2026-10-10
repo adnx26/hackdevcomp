@@ -1,0 +1,16 @@
+{
+  "auth": "browser session",
+  "response": {
+    "contract_version": "v1",
+    "data": {
+      "content_type": "text/plain",
+      "evidence_id": "ev_0015",
+      "kind": "EXPLANATION",
+      "scan_id": "scan_0006",
+      "source": "WORKER_ARTIFACT",
+      "text_escaped": "Imperative override aimed at the assistant.",
+      "truncated": false
+    }
+  },
+  "response_status": 200
+}

@@ -74,3 +74,9 @@ Give A verified callbacks and collector-event examples, C restricted callback im
 Use a branch such as `codex/team-b-runtime`. Merge after A, update against A's actual contract implementation, and pass core/runtime contract tests. C/D can work against your callback specification and test doubles before your PR merges.
 
 Include exact versions/platform, commands and results, isolation evidence, disabled capabilities, safe configuration examples, and operational limitations. Ask A to review authority boundaries and C to review its execution environment. Completion requires a verified fixed-roster SLIM round trip and isolation proof; transport success alone is not a completed scanner.
+
+## 9. Reviewed A runtime/session/retention handoff
+
+Consume the exact [A v1 handoff additions](system-design.md#reviewed-a-v1-handoff-additions-october-10-2026). Privately issue assignment capabilities; preserve fixed identity and lease/deadline bounds. Extractor version equals the assignment's pinned build. B atomically enforces one shared model-token budget across roles/retries and a finite call budget. Artifacts return through authenticated results, not direct volume access; collector authority remains separate. Configure the public gateway origin and same-origin session recovery transport; do not enable credentialed cross-origin CORS.
+
+The agreed demo policy is evidence ≤24 hours and metadata/logs ≤seven days from creation, with derived evidence bounded by source expiry, startup and every-minute cleanup, and no enabled backups/snapshots/immutable exports. Inventory actual host copies/logging before activation and record proof in B's deployment handoff. Later copy/restore policy follows the master; provider retention is separate. The A merge review records an independent B-facing role review, not original B-author or host verification. B's PR must independently prove its implementation after A lands.

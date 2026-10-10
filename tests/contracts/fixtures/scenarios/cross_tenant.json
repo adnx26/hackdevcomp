@@ -1,0 +1,27 @@
+{
+  "contract_version": "v1",
+  "description": "Another tenant's lookups look identical to nonexistent objects.",
+  "expected": {
+    "get_inspected_result": {
+      "code": "NOT_FOUND",
+      "http_status": 404,
+      "retryable": false
+    },
+    "get_scan_status": {
+      "code": "NOT_FOUND",
+      "http_status": 404,
+      "retryable": false
+    },
+    "get_task_session": {
+      "code": "NOT_FOUND",
+      "http_status": 404,
+      "retryable": false
+    },
+    "unknown_scan": {
+      "code": "NOT_FOUND",
+      "http_status": 404,
+      "retryable": false
+    }
+  },
+  "scenario": "cross_tenant"
+}

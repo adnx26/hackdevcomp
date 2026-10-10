@@ -1,0 +1,6 @@
+{
+  "build_version": "b-1.0",
+  "prompt_version": "bp-1",
+  "role": "BEHAVIOR_TESTER",
+  "worker_id": "w-behavior"
+}

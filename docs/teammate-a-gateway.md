@@ -69,3 +69,7 @@ Use a branch such as `codex/team-a-gateway`. Your PR merges first and supplies t
 Include owned paths, `v1` compatibility, exact tests/results, disabled capabilities, and configuration requirements without secrets. Ask B to review runtime callbacks and D to review public/authentication contracts. After changes requested by their review, update the canonical examples rather than leaving teammates to infer behavior.
 
 Completion means the core's authority and state-transition tests pass, missing runtime capability fails closed, and B/C/D can consume the published contracts. It does not mean the complete scanner or a production email integration is ready.
+
+## 8. Reviewed v1 handoff clarification
+
+Implement the exact [A v1 handoff additions](system-design.md#reviewed-a-v1-handoff-additions-october-10-2026), including cookie-only recovery with origin/header rules, current status eligibility, private diagnostic projection, pinned extraction version, commit-time worker authority, and the A/B retention policy. Canonical fixtures must match the final core. The merge audit records independent role-review provenance and separates proposal approval from deployment proof. No later PR is verified by this amendment.

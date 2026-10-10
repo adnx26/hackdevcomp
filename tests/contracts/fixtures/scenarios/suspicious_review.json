@@ -1,0 +1,75 @@
+{
+  "after_review_exception": {
+    "release_basis": "REVIEW_EXCEPTION",
+    "result_released": true
+  },
+  "contract_version": "v1",
+  "description": "Uncorroborated override attempt; held for user review.",
+  "expected": {
+    "decision": "REVIEW",
+    "reason_codes": [
+      "SUSPICIOUS_UNCORROBORATED"
+    ],
+    "result_error_code": "APPROVAL_REQUIRED",
+    "result_released": false,
+    "review_exception_eligible": true,
+    "state": "DECIDED"
+  },
+  "scenario": "suspicious_review",
+  "status_response": {
+    "collector_evidence": [],
+    "completed_checks": [
+      "EXTRACTION",
+      "BEHAVIOR_TESTER",
+      "DATA_TOOL_INSPECTOR",
+      "INSTRUCTION_INSPECTOR"
+    ],
+    "coverage": {
+      "extraction": [
+        {
+          "resource_id": "res_0003",
+          "status": "COMPLETE",
+          "unsupported_parts": []
+        }
+      ],
+      "inspections": {
+        "BEHAVIOR_TESTER": "COMPLETE",
+        "DATA_TOOL_INSPECTOR": "COMPLETE",
+        "INSTRUCTION_INSPECTOR": "COMPLETE"
+      }
+    },
+    "created_at": "2026-10-10T12:00:00Z",
+    "deadline_at": "2026-10-10T12:01:00Z",
+    "decision": "REVIEW",
+    "decision_expires_at": "2026-10-10T13:00:00Z",
+    "findings": [
+      {
+        "category": "OVERRIDE_ATTEMPT",
+        "evidence_ids": [
+          "ev_0015"
+        ],
+        "resource_id": "res_0003",
+        "role": "INSTRUCTION_INSPECTOR"
+      }
+    ],
+    "policy_id": "summarize_email",
+    "reason_codes": [
+      "SUSPICIOUS_UNCORROBORATED"
+    ],
+    "required_checks": [
+      "EXTRACTION",
+      "INSTRUCTION_INSPECTOR",
+      "DATA_TOOL_INSPECTOR",
+      "BEHAVIOR_TESTER"
+    ],
+    "review": {
+      "eligible": true,
+      "result_digest": "3aad4186f17df691dce59c7f71faf6b1789b0e0cb9c914f3c2aacf1f91fc1c1b"
+    },
+    "scan_id": "scan_0006",
+    "state": "DECIDED",
+    "task_scope_version": 1,
+    "task_session_id": "ts_0005",
+    "updated_at": "2026-10-10T12:00:00Z"
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "assignment_id": "ia_0009",
+  "attempt": 1,
+  "checked_views": [
+    {
+      "resource_id": "res_0001",
+      "view_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d",
+      "view_id": "visible"
+    }
+  ],
+  "context_hash": "7d842a9038216dfa2a14e3477d16764b93a62d9b9dda9bd9b154935459ce1078",
+  "contract_version": "v1",
+  "findings": [],
+  "inspection_status": "COMPLETE",
+  "model_configuration_hash": "63ad0100886734806bc535a6888090e82e19d5f90792bbac63f44e32593c3c29",
+  "nonce": "nonce-ia_0009-0-COMPLETE",
+  "policy": {
+    "policy_hash": "5037744bfb4d3fe09f1c8be37ceba43b73a14d7ab4f090e4b1cac98d817b0b6e",
+    "policy_id": "extract_invoice",
+    "policy_version": "1"
+  },
+  "resource_set_hash": "18f058159d6ee556800d240cc510a48e6b5bcec69ac65280fb63c35335866bf1",
+  "scan_id": "scan_0004",
+  "task_output": {
+    "fields": {
+      "amount": {
+        "source_refs": [
+          {
+            "end": 38,
+            "resource_id": "res_0001",
+            "start": 29,
+            "view_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d"
+          }
+        ],
+        "value": "1250.00"
+      },
+      "currency": {
+        "source_refs": [
+          {
+            "end": 42,
+            "resource_id": "res_0001",
+            "start": 39,
+            "view_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d"
+          }
+        ],
+        "value": "USD"
+      },
+      "due_date": {
+        "source_refs": [
+          {
+            "end": 63,
+            "resource_id": "res_0001",
+            "start": 53,
+            "view_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d"
+          }
+        ],
+        "value": "2026-11-01"
+      },
+      "invoice_id": {
+        "source_refs": [
+          {
+            "end": 16,
+            "resource_id": "res_0001",
+            "start": 8,
+            "view_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d"
+          }
+        ],
+        "value": "INV-1001"
+      }
+    },
+    "kind": "invoice"
+  },
+  "task_scope_version": 1,
+  "task_session_id": "ts_0003",
+  "telemetry_event_ids": [
+    "ce-scan_0004-0"
+  ],
+  "worker": {
+    "build_version": "b-1.0",
+    "prompt_version": "bp-1",
+    "role": "BEHAVIOR_TESTER",
+    "worker_id": "w-behavior"
+  }
+}

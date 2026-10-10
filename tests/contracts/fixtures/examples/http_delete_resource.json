@@ -1,0 +1,11 @@
+{
+  "auth": "UI/API only",
+  "response": {
+    "contract_version": "v1",
+    "data": {
+      "deleted": true,
+      "resource_id": "res_0004"
+    }
+  },
+  "response_status": 200
+}

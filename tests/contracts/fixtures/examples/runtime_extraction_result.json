@@ -1,0 +1,25 @@
+{
+  "assignment_id": "xa_0005",
+  "contract_version": "v1",
+  "extractor_version": "x-1.0",
+  "original_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d",
+  "resource_id": "res_0001",
+  "status": "COMPLETE",
+  "unsupported_parts": [],
+  "views": [
+    {
+      "kind": "plain_text",
+      "source_map": [
+        [
+          0,
+          76,
+          0,
+          76
+        ]
+      ],
+      "text": "Invoice INV-1001\nAmount due: $1,250.00 USD\nDue date: 2026-11-01\nThanks, Acme",
+      "view_hash": "2693a13ca094dd7a3954ef463a146ab51c50356a0e2105694d41cc2082b2194d",
+      "view_id": "visible"
+    }
+  ]
+}

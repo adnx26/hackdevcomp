@@ -1,0 +1,22 @@
+{
+  "response": {
+    "contract_version": "v1",
+    "error": {
+      "code": "NOT_FOUND",
+      "request_id": "req_0123456789abcdef",
+      "retryable": false
+    }
+  },
+  "response_status": 404,
+  "status_mapping": {
+    "APPROVAL_REQUIRED": 428,
+    "CONTEXT_CHANGED": 409,
+    "FORBIDDEN": 403,
+    "INVALID_REQUEST": 400,
+    "LIMIT_EXCEEDED": 429,
+    "NOT_FOUND": 404,
+    "NOT_READY": 409,
+    "SERVICE_UNAVAILABLE": 503,
+    "UNAUTHENTICATED": 401
+  }
+}
