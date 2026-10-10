@@ -1,0 +1,38 @@
+# Design C implementation handoff
+
+Source: `docs/teammate-c-inspection-agents.md`, together with system-design sections 1–15 and B's runtime responsibilities. Target repository: https://github.com/adnx26/hackdevcomp. This branch implements C-owned paths only. Contract consumed: `v1`. No dependencies, gateway schemas, launcher, transport, authorization code or UI were added.
+
+## Entry points and versions
+
+`protection_gateway.workers.extract(assignment, restricted_io)` and `inspect(assignment, restricted_io, model_client, simulated_tools)` are synchronous JSON-mapping boundaries. Extractor: `c-extractor-1`; build: `c-workers-1`; prompts: `c-prompts-1`. Inspector role keys are provisionally `instruction`, `data`, `behavior`; B must map these to its fixed roster. There is no production fallback when a callback is unavailable.
+
+A and B have no implementations in the documentation baseline. The following callback details and supplemental assignment fields are provisional integration choices, not additions to canonical schemas. A must review exact output/reference fields and B must implement and review these adapters before activation. The implementation consumes opaque policy hashes unchanged; A owns canonical serialization and validation.
+
+* `restricted_io.read_resource(resource_id)` returns original bytes and enforces assignment scope. Extraction resource entries carry `resource_id`, `original_hash`, `media_type` and optional `charset`.
+* `restricted_io.read_view(resource_id, view_id)` returns a mapping with `text`. Workers independently check its SHA-256 hash against the assignment. `write_artifact(mapping)` returns an opaque, scoped private evidence ID.
+* `model_client.generate(mapping)` supplies bounded structured responses. The request contains fixed system instructions, copied task policy, all assigned documents together, versions, bindings, signals and dummy tool history. No endpoint, SDK, filesystem or network is available from worker code.
+* `simulated_tools.attempt(operation, arguments)` records EVERY model-proposed attempt, including unknown operations, then returns B's collector receipt. Receipt fields: `event_id`, `scan_id`, `run_id`, `sequence`, `operation`, `dummy_argument_digest`, `attempted_outcome`, `policy_check` (`ALLOWED`/`FORBIDDEN`), `timestamp`. B binds credentials and validates receipts; A independently authenticates matching events. C checks shape and bindings only and cannot certify authenticity.
+
+Extraction limits: `max_bytes`, `max_chars`, `max_views`, `max_parts`, `max_decode_depth`. Worker limits: `max_chars`, `max_views`, `max_model_calls`, `max_tool_calls`, `max_output_chars`. Hard ceilings bound local work even if requested limits are larger. Broker response size, calls, total token budget, timeout and cancellation also require enforcement by B outside these synchronous callbacks.
+
+Inspection assignment fields listed in system-design section 15 are repeated in results. Additional provisional inputs: `views` (resource ID, view ID, hash), `task_policy` (immutable A-issued mapping), `extraction_status`, and for behavior `run_id`/`simulated_operations`. A must supply the complete relevant set, including every supported alternative/decoded view; a worker cannot discover omitted resources. No source text is parsed as assignment configuration.
+
+## Outputs and coverage
+
+Extraction includes original hashes, views, hashes, private artifacts, source maps, unsupported parts, extractor version and `extraction_status`. Plain text supports strict UTF-8 and declared Python text codecs. MIME supports bounded text/plain and text/html bodies; all alternatives are retained. Attachments and all other types produce incomplete coverage with unknown task relevance for A to resolve. HTML produces exact raw markup plus visible/hidden text; no rendering, script execution or URL fetching occurs. Raw markup retains comments, attributes and styles that the conservative hidden-text parser cannot interpret.
+
+Maps use Unicode codepoint spans in parent views; raw text maps back to byte spans. HTML entities map to their original markup spans. Explicit `base64:` decoding and Unicode format-character removal create separate hashed views with parent mappings. Other encodings are not advertised as decoded. Depth/work exhaustion is incomplete; invalid codecs/MIME/base64 are errors. MIME decoded body origins conservatively map to the WHOLE original message, marked `mapping_precision: WHOLE_MESSAGE`, with a part ID. This is provenance, not a precise byte localization; A/D must preserve that limitation. No PDF/archive/image/audio extraction is available.
+
+Specialists require structured `checked_views` covering the exact full assigned set and bounded findings with valid source spans. Model-generated observed-action categories are rejected. Deterministic keyword matches are contextual hints only; no keyword verdict quarantines benign procedures or quotations. Model findings are private artifacts with evidence IDs. Public decisions remain entirely A's responsibility.
+
+Behavior executes broker-proposed calls through the collector and retains event IDs even if a later response fails. Forbidden event references survive a harmless final response. Document references on behavioral findings record run context, not a proven causal attribution to a specific source. A must validate the collector evidence before using `OBSERVED_FORBIDDEN_ACTION`.
+
+Invoice output permits only invoice_id/amount/currency/due_date, with source references and exact source-value checks; absent fields stay absent. Summary statements require supporting references. The behavior harness supports summarize_email and extract_invoice; simulate_send returns UNSUPPORTED_TASK_CONTEXT until A/B define its exact user-authorized simulation context. The two specialists can still inspect that task policy. Supporting references alone cannot prove paraphrase semantics or catch every changed amount in a narrative. A must attach server-owned disclosure labels before release. Model output is never approval. Empty summaries, refusals, invalid responses, missing views, expired deadlines, unsupported extraction, budget failures and collector failures cannot become complete inspections.
+
+## Validation and remaining release gates
+
+Run `PYTHONPATH=src python3 -m unittest discover -s tests/workers -v` (Python 3.11, standard library only). Tests use deterministic callback doubles exclusively under tests/workers. The benign/adversarial JSON fixtures encode expected specialist responses to exercise contracts; they are NOT measurements of a live detector's accuracy or A-reviewed gateway decisions.
+
+Missing: A's canonical validators/evidence store/decisions/labels and B's actual scoped I/O, broker, authoritative collector, SLIM and enforced isolation. Fresh-process scratch destruction, cross-job/credential/network exclusion and authenticated replay controls must be proven by B. No live model accuracy, native-client reproduction, end-to-end workflow, or host isolation result is claimed. No real tools or side effects are enabled.
+
+Before merge, update against A then B and rerun actual contract/runtime tests. A reviews reference/status/output compatibility and fixture expectations; B reviews callbacks, prompts, roster and isolation; D reviews source consumption. The complete scanner remains unavailable until those integration gates pass.
