@@ -1034,7 +1034,7 @@ class GatewayService:
                 # A citation cannot carve a smaller amount from inside a source number.
                 matches = any(
                     ref["start"] <= token.start() and token.end() <= ref["end"]
-                    and Decimal((token.group("sign_before") or token.group("sign_after") or "") + token.group("number").replace(",", "")) == Decimal(field["value"])
+                    and Decimal((token.group("sign_before") or token.group("sign_after") or "").translate(str.maketrans("−﹣－＋", "---+")) + token.group("number").replace(",", "")) == Decimal(field["value"])
                     for ref in field["source_refs"]
                     for token in _AMOUNT_TOKEN.finditer(self._view_text(scan, ref["resource_id"], ref["view_hash"]))
                 )
@@ -1796,7 +1796,7 @@ _CURRENCY_SYMBOLS = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY"}
 _PUBLIC_MEDIA_TYPES = {"application/pdf", "application/octet-stream", "message/rfc822", "text/plain", "text/html", "image/png", "image/jpeg"}
 _PUBLIC_UNSUPPORTED_REASONS = {"UNSUPPORTED_FORMAT", "UNSUPPORTED_CONTENT", "ENCRYPTED_CONTENT", "LIMIT_EXCEEDED", "EXTRACTION_ERROR"}
 _AMOUNT_TOKEN = re.compile(
-    r"(?<![\w.,])(?:(?P<sign_before>[-+])\s*(?:[$€£¥]\s*)?|[$€£¥]\s*(?P<sign_after>[-+]?)\s*)?"
+    r"(?<![\w.,])(?:(?P<sign_before>[-+−﹣－＋])\s*(?:[$€£¥]\s*)?|[$€£¥]\s*(?P<sign_after>[-+−﹣－＋]?)\s*)?"
     r"(?P<number>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?![\w.]|,\d)"
 )
 _DATE_FORMATS = ("%Y-%m-%d", "%d %B %Y", "%B %d, %Y", "%d %b %Y", "%b %d, %Y")

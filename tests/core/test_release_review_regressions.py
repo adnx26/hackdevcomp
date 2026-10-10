@@ -114,7 +114,7 @@ class ReleaseReviewRegressions(unittest.TestCase):
         return scan["scan_id"]
 
     def test_signed_currency_amount_cannot_approve_positive_value(self):
-        for token in ("-$1250.00", "$-1250.00"):
+        for token in ("-$1250.00", "$-1250.00", "−$1250.00", "$−1250.00", "－$1250.00"):
             for citation in (token, "1250.00"):
                 with self.subTest(token=token, citation=citation):
                     scan_id = self.signed_invoice(token, "1250.00", citation)
@@ -125,7 +125,7 @@ class ReleaseReviewRegressions(unittest.TestCase):
                         self.h.service.get_inspected_result(self.api, scan_id)
 
     def test_signed_currency_amount_accepts_correct_negative_value(self):
-        for token in ("-$1250.00", "$-1250.00"):
+        for token in ("-$1250.00", "$-1250.00", "−$1250.00", "$−1250.00", "－$1250.00"):
             with self.subTest(token=token):
                 scan_id = self.signed_invoice(token, "-1250.00", token)
                 self.assertEqual(self.h.service.get_scan_status(self.api, scan_id)["decision"], "ALLOW_UNDER_POLICY")

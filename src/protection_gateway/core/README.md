@@ -84,7 +84,11 @@ service.recover(startup=True)   # interrupted extractions fail closed
 
 | Operation | USER_INTERFACE | API | ASSISTANT | MCP |
 |---|---|---|---|---|
-| upload, task sessions | ✓ | ✓ | read-only policies only | – |
+| upload | ✓ | ✓ | ✓ | – |
+| task creation / resource scope | ✓ | ✓ | read-only policies only | – |
+| task view | ✓ | ✓ | ✓ | ✓ |
+| task cancel / context advance | ✓ | ✓ | ✓ | – |
+| resource deletion | ✓ | ✓ | – | – |
 | inspect / status / result | ✓ | ✓ | ✓ | ✓ |
 | cancel scan | ✓ | ✓ | ✓ | – |
 | review exception / reject | ✓ | – | – | – |
