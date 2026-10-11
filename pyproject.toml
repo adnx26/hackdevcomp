@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "protection-gateway"
+version = "0.1.0"
+description = "AGNTCY prompt-injection protection gateway (contract v1)"
+requires-python = ">=3.11"
+# Versions below were pinned after the compatibility smoke test recorded in
+# deploy/README.md. Dependency changes go through teammate B.
+dependencies = [
+    "slim-bindings==2.2.0",
+    # Root ASGI server: D's adapters are a standard-library ASGI application.
+    "uvicorn==0.53.0",
+]
+
+[project.optional-dependencies]
+# Provider SDK used only by the gateway-side model broker; never importable
+# credentials for workers.
+anthropic = ["anthropic==1.8.0"]
+dev = ["pytest==8.4.2"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+markers = [
+    "isolation: needs the verified sandbox host (shadictl + kernel sandbox); a skip is not a production pass",
+]
