@@ -35,6 +35,7 @@ const reasonInfo = {
   RESOURCE_DELETED: 'A source was removed before the inspection completed.',
   CONTRADICTORY_EVIDENCE: 'The inspection produced conflicting records, so the content remains held.',
   EMERGENCY_STOP: 'The gateway emergency stop prevented this inspection from completing.',
+  VENDOR_BANK_MISMATCH: 'The content gives bank details for a known vendor that differ from the vendor registry. Verify them with the vendor through a known channel.',
 };
 const roleInfo = {
   INSTRUCTION_INSPECTOR: 'Instruction check',
@@ -48,6 +49,7 @@ const verdictInfo = {
 const ruleInfo = {
   collector_forbidden_action: 'Forbidden tool attempt recorded by the gateway collector',
   extraction_coverage: 'All task-relevant content extracted',
+  vendor_bank_details: 'Bank details match the vendor registry',
   inspection_completeness: 'Every required inspection completed',
   uncorroborated_suspicion: 'No unresolved suspicion',
   answer_integrity: 'Result matches its cited source',

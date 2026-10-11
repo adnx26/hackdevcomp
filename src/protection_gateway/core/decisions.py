@@ -54,6 +54,8 @@ class DecisionInputs:
     exhausted_roles: frozenset[str] = frozenset()
     deadline_passed: bool = False
     verified_forbidden_action: bool = False
+    # Deterministic: a registered vendor's bank details differ from the registry.
+    vendor_bank_mismatch: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,9 @@ def decide(inputs: DecisionInputs) -> DecisionOutcome:
         if result.contradicts_telemetry:
             reasons.append(ReasonCode.CONTRADICTORY_EVIDENCE.value)
 
+    if inputs.vendor_bank_mismatch:
+        reasons.append(ReasonCode.VENDOR_BANK_MISMATCH.value)
+
     behavior = inputs.results.get(WorkerRole.BEHAVIOR_TESTER.value)
     if behavior is not None and behavior.status == InspectionStatus.COMPLETE and not behavior.has_task_output:
         reasons.append(ReasonCode.TASK_OUTPUT_MISSING.value)
@@ -136,6 +141,8 @@ DECISION_RULES = (
     ("extraction_coverage", Decision.REVIEW.value,
      frozenset({ReasonCode.EXTRACTION_INCOMPLETE.value, ReasonCode.EXTRACTION_ERROR.value, ReasonCode.UNSUPPORTED_CONTENT.value, ReasonCode.LIMIT_EXCEEDED.value}),
      "Not all task-relevant content could be extracted. Uninspected content is never approved."),
+    ("vendor_bank_details", Decision.REVIEW.value, frozenset({ReasonCode.VENDOR_BANK_MISMATCH.value}),
+     "The content names a registered vendor but gives bank details that differ from the vendor registry. A deterministic rule holds it for verification."),
     ("inspection_completeness", Decision.REVIEW.value,
      frozenset({ReasonCode.INSPECTION_INCOMPLETE.value, ReasonCode.INSPECTION_ERROR.value, ReasonCode.WORKER_MISSING.value, ReasonCode.TIMEOUT.value}),
      "A required inspector failed, timed out or did not return. A failure never counts as a clean result."),

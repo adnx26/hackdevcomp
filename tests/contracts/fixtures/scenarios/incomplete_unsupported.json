@@ -63,6 +63,13 @@
           "rule": "extraction_coverage"
         },
         {
+          "description": "The content names a registered vendor but gives bank details that differ from the vendor registry. A deterministic rule holds it for verification.",
+          "fired": false,
+          "outcome": "REVIEW",
+          "reason_codes": [],
+          "rule": "vendor_bank_details"
+        },
+        {
           "description": "A required inspector failed, timed out or did not return. A failure never counts as a clean result.",
           "fired": false,
           "outcome": "REVIEW",

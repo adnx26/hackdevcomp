@@ -39,6 +39,8 @@ class RuntimeConfig:
     replay_dir: Path = field(default_factory=lambda: REPO_ROOT / "var" / "replay-cache")
     # Precomputed no-gateway baselines written by make eval; served read-only by the core.
     baseline_dir: Path = field(default_factory=lambda: REPO_ROOT / "var" / "baselines")
+    # Known-vendor registry for the core's deterministic bank-details rule (demo fixture by default).
+    vendor_registry: Path | None = field(default_factory=lambda: REPO_ROOT / "demo" / "vendors.json")
     dev_mode: bool = False
     login_token_file: Path | None = None
     collector_key_file: Path | None = None
@@ -84,6 +86,7 @@ class RuntimeConfig:
             model_replay=replay,
             replay_dir=path("PG_REPLAY_DIR") or REPO_ROOT / "var" / "replay-cache",
             baseline_dir=path("PG_BASELINE_DIR") or REPO_ROOT / "var" / "baselines",
+            vendor_registry=path("PG_VENDOR_REGISTRY") or REPO_ROOT / "demo" / "vendors.json",
             dev_mode=env.get("PG_DEV_MODE") == "1",
             login_token_file=path("PG_LOGIN_TOKEN_FILE"),
             collector_key_file=path("PG_COLLECTOR_KEY_FILE"),

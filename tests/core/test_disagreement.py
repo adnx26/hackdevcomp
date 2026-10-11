@@ -50,7 +50,7 @@ class DisagreementTests(unittest.TestCase):
         trace = status["decision_trace"]
         self.assertEqual(trace["deciding_rule"], "all_checks_passed")
         self.assertEqual([r["rule"] for r in trace["rules"]], [rule[0] for rule in DECISION_RULES])
-        self.assertEqual([r["fired"] for r in trace["rules"]], [False] * 5 + [True])
+        self.assertEqual([r["fired"] for r in trace["rules"]], [False] * (len(DECISION_RULES) - 1) + [True])
         examined = self.inspectors(status)["DATA_TOOL_INSPECTOR"]["views_examined"]
         self.assertEqual(examined, self.inspectors(status)["DATA_TOOL_INSPECTOR"]["views_assigned"])
 

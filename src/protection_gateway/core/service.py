@@ -52,6 +52,7 @@ from .decisions import (
     DecisionInputs, DecisionOutcome, RoleResult, decide, decision_trace, disagreement_summary, review_exception_eligible,
 )
 from .runtime_api import ActionExecutor, RuntimeCallbacks
+from .vendors import bank_mismatch, load_registry
 from .storage import Cipher, EvidenceStore
 
 log = logging.getLogger("protection_gateway.core")
@@ -1170,6 +1171,12 @@ class GatewayService:
             "SELECT 1 FROM collector_events WHERE scan_id = ? AND effective_policy_check = ?",
             (scan_id, PolicyCheck.FORBIDDEN.value),
         )
+        mismatch = False
+        registry = load_registry(self.config.vendor_registry_path)
+        if registry:
+            texts = [self._view_text(scan, e["resource_id"], v["view_hash"]) or ""
+                     for e in extractions for v in _loads(e["views_json"], [])]
+            mismatch = bank_mismatch(texts, registry)
         return decide(
             DecisionInputs(
                 extraction_statuses=statuses,
@@ -1180,6 +1187,7 @@ class GatewayService:
                 exhausted_roles=frozenset(exhausted),
                 deadline_passed=now >= parse_iso(scan["deadline_at"]),
                 verified_forbidden_action=forbidden is not None,
+                vendor_bank_mismatch=mismatch,
             )
         )
 
