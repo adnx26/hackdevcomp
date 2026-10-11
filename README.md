@@ -64,9 +64,9 @@ The complex fixture contains conflicting invoice values and several synthetic in
 
 ## Scan a folder
 
-1. Sign in, then use **Scan a folder, including subfolders** and select a folder on your computer. Nested files are included with their relative paths.
-2. Select **Upload and scan folder**. The gateway inspects the supported files together against a read-only summary task.
-3. Read the folder report for each file's status and supporting evidence. A flagged file can appear before all checks finish; the report distinguishes completed inspections from pending checks. It also shows completed required checks and names a failed check, such as the task-result check, when full coverage cannot be confirmed.
+1. Sign in, then drag files or a folder into the large drop area, or use **Choose files** / **Choose a folder**. Nested files are included with their relative paths.
+2. Select **Scan Now**. A progress bar shows upload preparation and completed required checks, with the files in the current scan listed below. The agents inspect supported files together against a read-only summary task; progress does not imply a file-by-file inspection order.
+3. When the scan finishes, suspicious files appear first with plain-language findings and **Review evidence** buttons. Files with no findings and any uninspected files are listed separately by status. The progress bar reaches 100% only when coverage is complete. Incomplete checks remain clearly labeled. Advanced task policies and permitted-result controls are available under **More options**.
 
 Folder scans support text files with `.txt`, `.md`, `.csv`, `.json`, `.log`, `.py`, `.js`, `.ts`, `.css`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, and `.eml` extensions. This checks document content for prompt injection; it is not an antivirus or executable malware scanner. PDFs, images, archives, and other unsupported files appear in the report as uninspected and prevent complete folder coverage. Empty directories have no files to inspect.
 
@@ -88,6 +88,7 @@ Run deterministic checks without live model calls or API charges:
 
 ```sh
 make test                   # Unit and contract checks
+node --test tests/adapters/scanner-ui.test.cjs  # File selection and progress UI checks
 make test-e2e               # Real local HTTP/core/worker/SLIM stack; deterministic inference
 make test-isolation         # Host-specific sandbox checks
 .venv/bin/python -m pip check
