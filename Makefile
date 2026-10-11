@@ -5,7 +5,7 @@ PYTHON ?= $(shell for p in python3.13 python3.12 python3.11; do command -v $$p >
 PORT ?= 8766
 PYTHON_HELP := Install one with uv (uv python install 3.12) or pyenv (pyenv install 3.12), see README, then run: make setup PYTHON=/path/to/python3.12
 
-.PHONY: setup test test-isolation test-e2e smoke check run lock
+.PHONY: setup test test-isolation test-e2e smoke check doctor run lock
 
 setup:
 	@if [ -z "$(PYTHON)" ]; then echo "error: no Python 3.11 or later found on PATH. $(PYTHON_HELP)" >&2; exit 1; fi
@@ -35,6 +35,11 @@ smoke:
 # Print capability status; exits non-zero unless the complete workflow is available.
 check:
 	PG_PORT=$(PORT) $(PY) -m protection_gateway.bootstrap --dev --check
+
+# Demo preflight: API key set (never printed), SLIM round trip, sandbox, model broker reply, port free.
+# Add ARGS=--offline to skip the one tiny live provider call.
+doctor:
+	$(PY) scripts/doctor.py --port $(PORT) $(ARGS)
 
 run:
 	PG_PORT=$(PORT) $(PY) -m protection_gateway.bootstrap --dev

@@ -44,12 +44,15 @@ cp deploy/local.env.example .env
 
 Edit `.env` and replace `replace-with-your-key` with your key. The example also sets the provider, model, reasoning effort, timeout, output limit, and local port. The default model is `kimi-k3`.
 
-Check that the complete workflow is available, then start the gateway:
+Run the demo preflight, check that the complete workflow is available, then start the gateway:
 
 ```sh
+make doctor                 # one PASS/FAIL line per check; ARGS=--offline skips the live call
 make check
 make run
 ```
+
+`make doctor` confirms that `KIMI_API_KEY` is set (it never prints the value), the gateway port is free, the sandbox is available, a loopback SLIM node completes a point-to-point round trip, and the model provider answers one tiny health-check call through the broker's pinned transport. That call contains no document content and uses a few tokens.
 
 Open [http://127.0.0.1:8766/ui](http://127.0.0.1:8766/ui). The first development startup creates a local sign-in token at `var/runtime/login-token`. Enter that token in the page’s **Local gateway login token** field. It is separate from your Kimi API key.
 
