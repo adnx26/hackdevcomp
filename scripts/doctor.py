@@ -165,7 +165,22 @@ def check_model_broker(env: Mapping[str, str], transport_factory: Callable | Non
     return Result("model broker", True, f"{config.provider}/{config.model} at pinned endpoint responded")
 
 
+def check_replay_cache(env: Mapping[str, str]) -> Result:
+    from protection_gateway.runtime.config import RuntimeConfig
+    from protection_gateway.runtime.replay import ReplayCache
+
+    directory = RuntimeConfig.from_env(env).replay_dir
+    entries = len(ReplayCache(directory))
+    if not entries:
+        return Result("replay cache", False, f"no recorded responses in {directory} (record first with make run REPLAY=record)")
+    return Result("replay cache", True, f"{entries} recorded responses in {directory}; cache misses hold content for REVIEW")
+
+
 def run(env: Mapping[str, str], *, port: int, offline: bool, transport_factory: Callable | None = None) -> list[Result]:
+    if env.get("PG_MODEL_REPLAY") == "replay":
+        # Offline demo: no provider key or call is needed; the recorded cache is.
+        return [check_python(), Result("kimi api key", True, "not needed in replay mode", skipped=True), check_port(port),
+                check_sandbox(), check_slim(), check_replay_cache(env)]
     results = [check_python(), check_api_key(env), check_port(port), check_sandbox(), check_slim()]
     if offline:
         results.append(Result("model broker", True, "skipped (--offline)", skipped=True))

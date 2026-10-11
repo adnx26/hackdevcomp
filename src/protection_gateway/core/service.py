@@ -1434,7 +1434,19 @@ class GatewayService:
         }
         exception = eligible and output and self._active_exception(scan, principal.user_id, output['output_digest'])
         status['review_exception'] = {'active': bool(exception), **({'expires_at': exception['expires_at']} if exception else {})}
+        status['inference_mode'] = self._inference_mode(scan)
         return status
+
+    def _inference_mode(self, scan) -> str:
+        """LIVE or REPLAY for the model configuration bound into this scan.
+
+        Replay is a separate configuration (its binding carries inference=replay),
+        so a scan created under replay never shares the live hash. UNKNOWN means
+        the scan was bound to a configuration this gateway no longer runs.
+        """
+        if scan["model_configuration_hash"] != self.config.model_configuration_hash:
+            return "UNKNOWN"
+        return "REPLAY" if self.config.model_configuration.get("inference") == "replay" else "LIVE"
 
     def _source_expiry(self, scan):
         expiries = []
@@ -1518,6 +1530,7 @@ class GatewayService:
                 "result_digest": output["output_digest"],
                 "expires_at": expires,
                 "labels": labels,
+                "inference_mode": self._inference_mode(scan),
                 "result": content,
             }
 

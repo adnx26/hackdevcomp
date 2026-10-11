@@ -80,6 +80,14 @@ def test_run_reports_every_check_and_skips_offline(capsys):
     assert SECRET not in "\n".join(r.line() for r in results)
 
 
+def test_replay_mode_needs_a_cache_not_a_key(tmp_path):
+    env = {"PG_MODEL_REPLAY": "replay", "PG_REPLAY_DIR": str(tmp_path)}
+    results = doctor.run(env, port=0, offline=False)
+    assert results[1].skipped and results[-1].name == "replay cache" and not results[-1].ok
+    (tmp_path / ("a" * 64 + ".json")).write_text("{}")
+    assert doctor.run(env, port=0, offline=False)[-1].ok
+
+
 def test_missing_key_fails_broker_without_a_call():
     results = doctor.run({}, port=0, offline=False)
     assert not results[1].ok and not results[-1].ok and "API key" in results[-1].detail

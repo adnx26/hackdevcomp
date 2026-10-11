@@ -136,6 +136,7 @@ function canReadResult(data = state.status) {
 }
 function clearReleased() {
   $('result-panel').hidden = true;
+  $('result-replay-banner').hidden = true;
   $('result').textContent = '';
   $('chat-result').hidden = true;
   $('chat-result').textContent = '';
@@ -176,6 +177,9 @@ function renderStatus(data) {
     data.evidence_ids = [...new Set([...(data.findings || []).flatMap(f => f.evidence_ids), ...(data.collector_evidence || []).map(e => e.evidence_id)])];
   }
   state.status = data;
+  // Replayed runs are always labeled; anything other than LIVE is shown as such.
+  const inference = ['LIVE', 'REPLAY'].includes(data.inference_mode) ? data.inference_mode : 'UNKNOWN';
+  $('replay-banner').hidden = inference !== 'REPLAY';
   const decisionCopy = {
     ALLOW_UNDER_POLICY: ['Checks complete · permitted result', 'The required checks completed. You can view the result under the selected task policy.'],
     REVIEW: ['Held for review', 'The gateway found an unresolved issue or could not complete coverage. The source is not available to the assistant.'],
@@ -188,6 +192,7 @@ function renderStatus(data) {
   const metadata = {'Scan': data.scan_id,
     'Completed checks': `${new Set(data.completed_checks).size} / ${new Set(data.required_checks).size}`,
     'Coverage': data.coverage?.complete === true ? 'Complete' : data.coverage?.complete === false ? 'Incomplete' : 'Not reported',
+    'Inference': inference === 'REPLAY' ? 'REPLAY (recorded responses)' : inference === 'LIVE' ? 'Live model' : 'Not reported',
     'Result expires': Number.isFinite(resultExpiry(data)) ? new Date(resultExpiry(data)).toLocaleString() : 'Not issued'};
   for (const [key, value] of Object.entries(metadata)) {
     const dt = document.createElement('dt'), dd = document.createElement('dd');
@@ -413,6 +418,7 @@ $('result-button').addEventListener('click', () => exclusive($('result-button'),
   const scan = state.scan, generation = state.generation;
   const data = await api(`/v1/scans/${scan}/result`);
   if (generation !== state.generation || !canReadResult()) return;
+  $('result-replay-banner').hidden = data.inference_mode !== 'REPLAY';
   renderText('result', data); $('result-panel').hidden = false;
 }));
 $('chat-button').addEventListener('click', () => exclusive($('chat-button'), async () => {

@@ -41,6 +41,7 @@
     "decision": "QUARANTINE",
     "decision_expires_at": "2026-10-10T13:00:00Z",
     "findings": [],
+    "inference_mode": "LIVE",
     "policy_id": "summarize_email",
     "reason_codes": [
       "VERIFIED_FORBIDDEN_ACTION"

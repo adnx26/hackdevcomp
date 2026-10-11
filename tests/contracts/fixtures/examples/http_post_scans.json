@@ -28,6 +28,7 @@
       "decision": null,
       "decision_expires_at": null,
       "findings": [],
+      "inference_mode": "LIVE",
       "policy_id": "extract_invoice",
       "reason_codes": [],
       "required_checks": [

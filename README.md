@@ -77,6 +77,23 @@ For a first successful invoice flow, upload `tests/fixtures/e2e/invoice.txt` and
 
 The complex fixture contains conflicting invoice values and several synthetic injection styles, including fake role labels, tool-call-shaped text, markup, encoded text, Unicode lookalikes, repetition, and a final-position instruction. Its secrets, companies, and destinations are fictional.
 
+## Offline demo with replay
+
+Replay mode lets the demo run without network access and with identical inspector responses on every run. It is development-only (`--dev`, which `make run` sets).
+
+```sh
+make run REPLAY=record     # live Kimi; every complete inspector reply is cached in var/replay-cache/
+# ...run the demo inputs once in the UI...
+make doctor REPLAY=replay  # checks the cache instead of the API key
+make run REPLAY=replay     # offline: no provider call, no API key needed
+```
+
+- Replayed runs are labeled **REPLAY** in the inspection panel, the scan details and the released result. The API reports `inference_mode: "REPLAY"` on scan status and results.
+- Replay is evidence only. Replayed replies still pass the workers' validation and the core's checks, and the core still makes every decision. Replay uses its own model configuration (`inference: replay`), so a replayed scan never shares the live configuration hash.
+- Cache keys hash the prompt, model settings and document content, ignoring per-run IDs and timestamps, so a fresh upload of the same file replays. Change the document or prompt and the key changes.
+- A cache miss is an inspection failure, so the content stays held for REVIEW. It never falls back to a live call or to an allow.
+- Set `PG_REPLAY_DIR` to use another cache directory, for example a committed `demo/replay-cache/` recorded from synthetic demo inputs only.
+
 ## Run checks
 
 Run deterministic checks without live model calls or API charges:

@@ -3,6 +3,8 @@ PY := .venv/bin/python
 # First supported interpreter on PATH (newest first). Override with PYTHON=/path/to/python3.12.
 PYTHON ?= $(shell for p in python3.13 python3.12 python3.11; do command -v $$p >/dev/null 2>&1 && echo $$p && break; done)
 PORT ?= 8766
+# Development only. REPLAY=record caches live model replies; REPLAY=replay serves them offline (labeled REPLAY in the UI).
+REPLAY ?=
 PYTHON_HELP := Install one with uv (uv python install 3.12) or pyenv (pyenv install 3.12), see README, then run: make setup PYTHON=/path/to/python3.12
 
 .PHONY: setup test test-isolation test-e2e smoke check doctor run lock
@@ -34,15 +36,15 @@ smoke:
 
 # Print capability status; exits non-zero unless the complete workflow is available.
 check:
-	PG_PORT=$(PORT) $(PY) -m protection_gateway.bootstrap --dev --check
+	PG_PORT=$(PORT) PG_MODEL_REPLAY=$(REPLAY) $(PY) -m protection_gateway.bootstrap --dev --check
 
 # Demo preflight: API key set (never printed), SLIM round trip, sandbox, model broker reply, port free.
 # Add ARGS=--offline to skip the one tiny live provider call.
 doctor:
-	$(PY) scripts/doctor.py --port $(PORT) $(ARGS)
+	PG_MODEL_REPLAY=$(REPLAY) $(PY) scripts/doctor.py --port $(PORT) $(ARGS)
 
 run:
-	PG_PORT=$(PORT) $(PY) -m protection_gateway.bootstrap --dev
+	PG_PORT=$(PORT) PG_MODEL_REPLAY=$(REPLAY) $(PY) -m protection_gateway.bootstrap --dev
 
 lock:
 	uv pip compile pyproject.toml --extra anthropic --extra dev --universal --generate-hashes --python-version 3.11 -o requirements.lock
