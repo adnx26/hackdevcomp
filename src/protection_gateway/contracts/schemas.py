@@ -80,6 +80,15 @@ resource_upload_request = v.obj(
     {"filename": v.string(min_len=1, max_len=255)},
 )
 
+# Folder manifests contain user-selected relative names, never server paths.
+folder_entry = v.obj({
+    "path": v.string(min_len=1, max_len=512),
+    "size_bytes": v.integer(minimum=0, maximum=1_000_000_000_000),
+    "status": v.enum({"STORED", "UNSUPPORTED_FORMAT", "LIMIT_EXCEEDED", "UPLOAD_FAILED"}),
+}, {"resource_id": v.opaque_id})
+folder_upload_request = v.obj({"contract_version": version,
+    "entries": v.list_of(folder_entry, min_items=1, max_items=100)})
+
 task_session_request = v.obj(
     {
         "contract_version": version,

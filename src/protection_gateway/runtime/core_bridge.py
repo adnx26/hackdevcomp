@@ -196,6 +196,14 @@ class CoreRuntimeBridge:
             if result.get(key) != a[key]:
                 raise ValueError('worker binding mismatch')
         row = self._row(aid)
+        if result.get('inspection_status') != 'COMPLETE':
+            diagnostics = {'MODEL_REPORT_INVALID', 'SOURCE_REFERENCE_INVALID', 'MODEL_FINDINGS_INVALID',
+                           'TASK_OUTPUT_INVALID', 'SOURCE_QUOTE_NOT_UNIQUE', 'SOURCE_VALUE_MISMATCH',
+                           'MISSING_VIEWS', 'DEADLINE_EXCEEDED', 'MODEL_BUDGET', 'INSPECTION_FAILED'}
+            for code in result.get('reason_codes', [])[:4]:
+                self.runtime.operations.append({'scan_id':row['scan_id'], 'assignment_id':aid,
+                    'role':identity.role, 'event':'INSPECTION_FAILED',
+                    'reason_code':code if isinstance(code, str) and code in diagnostics else 'INSPECTION_FAILED'})
         payload = json.loads(row['assignment_json'])
         binding_keys = ('assignment_id', 'scan_id', 'attempt', 'worker', 'task_session_id', 'task_scope_version',
                         'policy', 'resource_set_hash', 'context_hash', 'model_configuration_hash')
@@ -266,6 +274,9 @@ class CoreRuntimeBridge:
         if scan is None or any(scan[k] != binding[k] for k in ('task_session_id', 'task_scope_version', 'policy_id', 'policy_version', 'policy_hash')):
             return False
         return get_policy(scan['policy_id']).operation_permitted(operation)
+
+    def inspection_errors(self, scan_id):
+        return self.runtime.inspection_errors(scan_id)
 
     def model_processing_permitted(self, binding, provider):
         # Only the configured processor receives the views of a live assignment.

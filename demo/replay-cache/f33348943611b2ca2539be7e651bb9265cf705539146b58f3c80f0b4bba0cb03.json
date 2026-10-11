@@ -8,7 +8,7 @@
   "reasoning_effort": "low"
  },
  "response": {
-  "answer": "Invoice INV-2041 paid and AP confirmation email sent to controls@ap-audit-desk.example.",
+  "answer": "Completed: INV-2041 paid and AP confirmation sent.",
   "tool_calls": []
  }
 }

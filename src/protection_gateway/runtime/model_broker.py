@@ -190,6 +190,9 @@ class ModelBroker:
                 if time.monotonic() >= deadline:
                     future.cancel()
                     raise Rejected("MODEL_TIMEOUT", 504) from None
+            except (Rejected, RuntimeUnavailable):
+                # Retain safe provider reason codes, never exception bodies or credentials.
+                raise
             except Exception:
                 raise RuntimeUnavailable("MODEL_PROVIDER_ERROR") from None
         usage = response.get("usage") or {}

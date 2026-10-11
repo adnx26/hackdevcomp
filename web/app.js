@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const state = {csrf: null, resources: [], task: null, scan: null, status: null,
   action: null, actionRevision: 0, timer: null, expiryTimer: null, actionExpiryTimer: null,
-  generation: 0, delay: 1000, polling: false, busy: false};
+  selectedFiles: [], folderScanning: false, folder: null, folderTimer: null, folderDelay: 1000, generation: 0, delay: 1000, polling: false, busy: false};
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const knownErrors = new Set(['UNAUTHENTICATED','FORBIDDEN','NOT_FOUND','INVALID_REQUEST',
@@ -35,104 +35,12 @@ const reasonInfo = {
   RESOURCE_DELETED: 'A source was removed before the inspection completed.',
   CONTRADICTORY_EVIDENCE: 'The inspection produced conflicting records, so the content remains held.',
   EMERGENCY_STOP: 'The gateway emergency stop prevented this inspection from completing.',
-  VENDOR_BANK_MISMATCH: 'The content gives bank details for a known vendor that differ from the vendor registry. Verify them with the vendor through a known channel.',
 };
 const roleInfo = {
   INSTRUCTION_INSPECTOR: 'Instruction check',
   DATA_TOOL_INSPECTOR: 'Data and action check',
   BEHAVIOR_TESTER: 'Task result check',
 };
-const verdictInfo = {
-  FLAGGED: 'Flagged', CLEAN: 'Found nothing', FAILED: 'Failed or missing',
-  STOPPED: 'Stopped early (scan ended)', PENDING: 'Running',
-};
-const ruleInfo = {
-  collector_forbidden_action: 'Forbidden tool attempt recorded by the gateway collector',
-  extraction_coverage: 'All task-relevant content extracted',
-  vendor_bank_details: 'Bank details match the vendor registry',
-  inspection_completeness: 'Every required inspection completed',
-  uncorroborated_suspicion: 'No unresolved suspicion',
-  answer_integrity: 'Result matches its cited source',
-  all_checks_passed: 'All checks passed',
-  terminated: 'Scan ended before a decision',
-};
-const decisionNames = {ALLOW_UNDER_POLICY: 'Allow under policy', REVIEW: 'Review', QUARANTINE: 'Quarantine'};
-
-function element(tag, text, className) {
-  const node = document.createElement(tag);
-  if (text !== undefined) node.textContent = String(text);
-  if (className) node.className = className;
-  return node;
-}
-
-function renderAgents(data) {
-  const inspectors = Array.isArray(data.inspectors) ? data.inspectors.slice(0, 8) : [];
-  $('agents-panel').hidden = inspectors.length === 0;
-  $('inspector-cards').replaceChildren();
-  $('decision-trace').replaceChildren();
-  if (!inspectors.length) return;
-  const verdicts = inspectors.map(i => safeCode(i.verdict));
-  const reached = verdicts.filter(v => !['PENDING', 'STOPPED'].includes(v));
-  const disagree = data.disagreement?.disagree === true;
-  const banner = $('disagreement-banner');
-  banner.dataset.disagree = String(disagree);
-  if (disagree) {
-    const parts = inspectors.filter(i => !['PENDING', 'STOPPED'].includes(i.verdict))
-      .map(i => `${roleInfo[i.role] || readableName(i.role)}: ${(verdictInfo[i.verdict] || readableName(i.verdict)).toLowerCase()}`);
-    banner.textContent = `Inspectors disagree — ${parts.join('; ')}. The gateway does not take a vote; the rule marked below decided.`;
-  } else {
-    banner.textContent = reached.length ? 'Inspectors agree.' : 'Waiting for inspector results.';
-  }
-  const majority = reached.length ? reached.sort((a, b) => reached.filter(v => v === b).length - reached.filter(v => v === a).length)[0] : null;
-  for (const inspector of inspectors) {
-    const verdict = safeCode(inspector.verdict);
-    const card = element('article', undefined, 'inspector-card');
-    card.dataset.verdict = verdict;
-    if (disagree && majority && verdict !== majority && !['PENDING', 'STOPPED'].includes(verdict)) card.dataset.outlier = 'true';
-    card.append(element('h4', roleInfo[inspector.role] || readableName(inspector.role)),
-      element('p', verdictInfo[verdict] || readableName(verdict), 'verdict'),
-      element('p', `Status: ${readableName(safeCode(inspector.status))}`, 'hint'));
-    const flags = (inspector.flags || []).slice(0, 16).map(safeCode);
-    const flagList = element('ul', undefined, 'flag-list');
-    for (const flag of flags) flagList.append(element('li', (findingInfo[flag] || [readableName(flag)])[0]));
-    if (!flags.length) flagList.append(element('li', 'No flags', 'hint'));
-    card.append(element('p', 'Flags', 'label'), flagList);
-    const examined = (inspector.views_examined || []).slice(0, 16);
-    const assigned = (inspector.views_assigned || []).slice(0, 16);
-    const views = examined.length ? examined : assigned;
-    card.append(element('p', examined.length ? 'Views examined' : 'Views assigned (not confirmed)', 'label'),
-      element('p', views.map(v => readableName(safeCode(String(v.kind || 'view').toUpperCase()))).join(', ') || 'None', 'hint'));
-    const attempts = (inspector.tool_attempts || []).slice(0, 16);
-    if (attempts.length) {
-      const list = element('ul', undefined, 'flag-list');
-      for (const attempt of attempts) {
-        const item = element('li', `${readableName(safeCode(String(attempt.operation || '').toUpperCase()))}: ${safeCode(attempt.policy_check) === 'FORBIDDEN' ? 'blocked (forbidden)' : 'allowed (dummy)'}`);
-        if (safeCode(attempt.policy_check) === 'FORBIDDEN') item.className = 'forbidden';
-        list.append(item);
-      }
-      card.append(element('p', 'Sandbox tool attempts (gateway collector)', 'label'), list);
-    }
-    $('inspector-cards').append(card);
-  }
-  const trace = data.decision_trace;
-  if (!trace || typeof trace !== 'object') {
-    $('decision-trace').append(element('li', 'No decision yet. The core decides only after every required check finishes or the deadline passes.', 'hint'));
-    return;
-  }
-  const deciding = typeof trace.deciding_rule === 'string' ? trace.deciding_rule : '';
-  const rules = Array.isArray(trace.rules) && trace.rules.length ? trace.rules.slice(0, 12) : [{rule: deciding, fired: true, description: trace.description}];
-  for (const rule of rules) {
-    const id = typeof rule.rule === 'string' ? rule.rule : '';
-    const item = element('li');
-    item.dataset.fired = String(rule.fired === true);
-    if (id === deciding) item.dataset.deciding = 'true';
-    const outcome = decisionNames[rule.outcome] ? ` → ${decisionNames[rule.outcome]}` : '';
-    item.append(element('strong', `${rule.fired === true ? 'Fired' : 'Not fired'} · ${ruleInfo[id] || readableName(id)}${outcome}`));
-    if (id === deciding) item.append(element('span', 'Decided by this rule', 'deciding-tag'));
-    item.append(element('p', String(rule.description || '').slice(0, 400), 'hint'));
-    $('decision-trace').append(item);
-  }
-}
 function readableName(value) {
   return String(value || '').toLowerCase().split('_').map(part => part ? part[0].toUpperCase() + part.slice(1) : '').join(' ');
 }
@@ -228,18 +136,19 @@ function canReadResult(data = state.status) {
 }
 function clearReleased() {
   $('result-panel').hidden = true;
-  $('result-replay-banner').hidden = true;
-  $('value-list').replaceChildren(); $('source-view').replaceChildren(); $('source-view').hidden = $('source-caption').hidden = true;
-  sourceCache.clear();
   $('result').textContent = '';
   $('chat-result').hidden = true;
   $('chat-result').textContent = '';
   discardAction();
 }
 function invalidate() {
-  $('baseline-panel').hidden = true; $('baseline-body').replaceChildren(); $('compare-button').disabled = true;
-  $('agents-panel').hidden = true;
   ++state.generation;
+  clearTimeout(state.folderTimer);
+  state.folder = null;
+  if ($('folder-report')) $('folder-report').hidden = true;
+  state.folderScanning = false;
+  $('scan-progress').hidden = true;
+  updateScanControls();
   clearTimeout(state.timer);
   clearTimeout(state.expiryTimer);
   state.task = state.scan = state.status = null;
@@ -273,10 +182,6 @@ function renderStatus(data) {
     data.evidence_ids = [...new Set([...(data.findings || []).flatMap(f => f.evidence_ids), ...(data.collector_evidence || []).map(e => e.evidence_id)])];
   }
   state.status = data;
-  renderAgents(data);
-  // Replayed runs are always labeled; anything other than LIVE is shown as such.
-  const inference = ['LIVE', 'REPLAY'].includes(data.inference_mode) ? data.inference_mode : 'UNKNOWN';
-  $('replay-banner').hidden = inference !== 'REPLAY';
   const decisionCopy = {
     ALLOW_UNDER_POLICY: ['Checks complete · permitted result', 'The required checks completed. You can view the result under the selected task policy.'],
     REVIEW: ['Held for review', 'The gateway found an unresolved issue or could not complete coverage. The source is not available to the assistant.'],
@@ -289,7 +194,6 @@ function renderStatus(data) {
   const metadata = {'Scan': data.scan_id,
     'Completed checks': `${new Set(data.completed_checks).size} / ${new Set(data.required_checks).size}`,
     'Coverage': data.coverage?.complete === true ? 'Complete' : data.coverage?.complete === false ? 'Incomplete' : 'Not reported',
-    'Inference': inference === 'REPLAY' ? 'REPLAY (recorded responses)' : inference === 'LIVE' ? 'Live model' : 'Not reported',
     'Result expires': Number.isFinite(resultExpiry(data)) ? new Date(resultExpiry(data)).toLocaleString() : 'Not issued'};
   for (const [key, value] of Object.entries(metadata)) {
     const dt = document.createElement('dt'), dd = document.createElement('dd');
@@ -297,20 +201,11 @@ function renderStatus(data) {
     $('scan-meta').append(dt, dd);
   }
   $('checks').replaceChildren();
-  const finished = ['DECIDED', 'FAILED', 'CANCELED'].includes(data.state);
-  const failedLabel = {ERROR: 'Error', INCOMPLETE: 'Incomplete'};
   for (const check of new Set(data.required_checks)) {
     const li = document.createElement('li');
     const complete = data.completed_checks.includes(check);
-    // After a decision, a check that did not complete is a failure, never "waiting".
-    const reported = check === 'EXTRACTION'
-      ? (data.coverage?.extraction || []).map(e => e.status).find(s => s !== 'COMPLETE')
-      : data.coverage?.inspections?.[check];
-    const label = complete ? 'Complete' : !finished ? 'Waiting' : (failedLabel[reported] || (data.state === 'CANCELED' ? 'Canceled' : 'Did not return'));
-    li.textContent = `${label} · ${roleInfo[check] || readableName(check)}`;
-    li.dataset.complete = String(complete);
-    if (!complete && finished) li.dataset.failed = 'true';
-    $('checks').append(li);
+    li.textContent = `${complete ? 'Complete' : 'Waiting'} · ${roleInfo[check] || readableName(check)}`;
+    li.dataset.complete = String(complete); $('checks').append(li);
   }
   $('reasons').replaceChildren();
   const reasonCodes = (data.reason_codes || []).slice(0, 64).map(safeCode);
@@ -449,6 +344,7 @@ async function exclusive(button, operation) {
   try { await operation(); } catch (error) { fail(error); }
   finally {
     state.busy = false; button.disabled = false;
+    updateScanControls();
     $('confirm-action').disabled = !actionCurrent(state.action) || !$('exact-approval').checked;
     if (button.id === 'result-button') {
       button.disabled = !canReadResult();
@@ -469,7 +365,7 @@ $('upload-form').addEventListener('submit', event => {
     const data = await api('/v1/resources', {media_type: /\.eml$/i.test(file.name) ? 'message/rfc822' : 'text/plain', content_base64: btoa(binary)});
     if (data.storage_state !== 'STORED') throw new Error('SERVICE_UNAVAILABLE');
     const resourceId = validId(data.resource_id);
-    state.resources.push({id: resourceId, size: file.size, hash: digestPattern.test(data.original_hash) ? data.original_hash : null});
+    state.resources.push({id: resourceId, size: file.size});
     $('empty-resources').hidden = true;
     const label = document.createElement('label'), checkbox = document.createElement('input');
     checkbox.type = 'checkbox'; checkbox.value = resourceId; checkbox.checked = true;
@@ -477,6 +373,262 @@ $('upload-form').addEventListener('submit', event => {
     label.append(checkbox, document.createTextNode(resourceId)); $('resources').append(label);
     invalidate(); $('upload').value = ''; $('scan-button').disabled = false;
     notice('Resource stored privately. Select a task to inspect it.');
+  });
+});
+// Relative names come from the browser's user-selected folder, never a server path.
+const folderTextExtensions = new Set(['txt','md','csv','json','log','py','js','ts','css','yaml','yml','xml','html','htm','eml']);
+function folderMedia(path) {
+  const name = path.split('/').pop();
+  if (name.lastIndexOf('.') <= 0) return null;
+  const extension = name.split('.').pop().toLowerCase();
+  if (!folderTextExtensions.has(extension)) return null;
+  return extension === 'eml' ? 'message/rfc822' : ['html','htm'].includes(extension) ? 'text/html' : 'text/plain';
+}
+function updateScanControls() {
+  const locked = state.busy || state.folderScanning;
+  $('folder-button').disabled = !state.csrf || !state.selectedFiles.length || locked;
+  $('choose-files').disabled = $('choose-folder').disabled = locked;
+  $('drop-zone').setAttribute('aria-disabled', String(locked));
+}
+function scanProgress(value, heading, description, files = []) {
+  $('scan-progress').hidden = false;
+  $('progress-heading').textContent = heading;
+  $('progress-description').textContent = description;
+  $('scan-progress-bar').value = value;
+  $('progress-count').textContent = `${Math.round(value)}%`;
+  $('progress-files').replaceChildren();
+  for (const path of files) {
+    const item = document.createElement('li'); item.textContent = path;
+    $('progress-files').append(item);
+  }
+}
+function selectScanFiles(files) {
+  if (state.busy || state.folderScanning) return;
+  invalidate();
+  state.selectedFiles = [];
+  $('selection-files').replaceChildren();
+  if (!files.length || files.length > 100 || new Set(files.map(item => item.path)).size !== files.length) {
+    $('selection').hidden = true;
+    notice('Choose 1–100 files with unique relative paths. No files were uploaded.', true);
+    updateScanControls(); return;
+  }
+  state.selectedFiles = files;
+  $('selection').hidden = false;
+  $('selection-summary').textContent = `${files.length} ${files.length === 1 ? 'file' : 'files'} ready to scan`;
+  for (const {path} of files) {
+    const item = document.createElement('li'); item.textContent = path;
+    $('selection-files').append(item);
+  }
+  notice('Your files are ready. Select Scan Now to begin.');
+  updateScanControls();
+}
+$('choose-files').addEventListener('click', () => $('scan-files').click());
+$('choose-folder').addEventListener('click', () => $('folder-upload').click());
+for (const id of ['scan-files', 'folder-upload']) {
+  $(id).addEventListener('change', () => {
+    selectScanFiles([...$(id).files].map(file => ({file, path:file.webkitRelativePath || file.name})));
+    $(id).value = '';
+  });
+}
+$('drop-zone').addEventListener('keydown', event => {
+  if (event.target === $('drop-zone') && ['Enter', ' '].includes(event.key) && !state.busy && !state.folderScanning) {
+    event.preventDefault(); $('scan-files').click();
+  }
+});
+let dragDepth = 0;
+$('drop-zone').addEventListener('dragenter', event => {
+  event.preventDefault(); ++dragDepth;
+  if (!state.busy && !state.folderScanning) $('drop-zone').classList.add('drag-over');
+});
+$('drop-zone').addEventListener('dragover', event => {
+  event.preventDefault(); event.dataTransfer.dropEffect = state.busy || state.folderScanning ? 'none' : 'copy';
+});
+$('drop-zone').addEventListener('dragleave', event => {
+  event.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; $('drop-zone').classList.remove('drag-over'); }
+});
+async function readDroppedFiles(entries, fallback) {
+  const files = [];
+  async function visit(entry, prefix = '') {
+    if (!entry) return;
+    const path = prefix + entry.name;
+    if (entry.isFile) {
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      files.push({file, path});
+      if (files.length > 100) throw new Error('LIMIT_EXCEEDED');
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      while (true) {
+        const children = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+        if (!children.length) break;
+        for (const child of children) await visit(child, path + '/');
+      }
+    }
+  }
+  if (entries.length) for (const entry of entries) await visit(entry);
+  else for (const file of fallback) files.push({file, path:file.webkitRelativePath || file.name});
+  return files;
+}
+$('drop-zone').addEventListener('drop', async event => {
+  event.preventDefault(); dragDepth = 0; $('drop-zone').classList.remove('drag-over');
+  if (state.busy || state.folderScanning) return;
+  // Capture entries while the drop event's data store is still readable.
+  const entries = [...event.dataTransfer.items].filter(item => item.kind === 'file').map(item => item.webkitGetAsEntry?.()).filter(Boolean);
+  const fallback = [...event.dataTransfer.files];
+  invalidate(); state.selectedFiles = []; $('selection').hidden = true;
+  notice('Reading your dropped files…');
+  const generation = state.generation;
+  state.busy = true; updateScanControls();
+  let files;
+  try { files = await readDroppedFiles(entries, fallback); }
+  catch { if (generation === state.generation) notice('Could not read this drop, or it contains more than 100 files. Choose a smaller folder using the button.', true); }
+  finally { state.busy = false; updateScanControls(); }
+  if (files && generation === state.generation) selectScanFiles(files);
+});
+// Prevent the browser from navigating away when a file misses the drop area.
+window.addEventListener('dragover', event => { if ([...event.dataTransfer.types].includes('Files')) event.preventDefault(); });
+window.addEventListener('drop', event => { if ([...event.dataTransfer.types].includes('Files')) event.preventDefault(); });
+function renderFolder(data) {
+  if (validId(data.folder_id) !== state.folder || !Array.isArray(data.files) || data.files.length > 100
+      || data.file_count !== data.files.length || typeof data.coverage_complete !== 'boolean') throw new Error('SERVICE_UNAVAILABLE');
+  const scanning = ['QUEUED','EXTRACTING','INSPECTING'].includes(data.state);
+  state.folderScanning = scanning; updateScanControls();
+  $('folder-report').hidden = scanning || (data.state === 'NOT_STARTED' && !!data.task_session_id);
+  const flagged = data.files.filter(file => file.status === 'FLAGGED').length;
+  const done = data.files.filter(file => file.inspection_complete === true).length;
+  const pending = data.files.some(file => file.status === 'PENDING');
+  const required = data.required_checks || [];
+  const completed = data.completed_checks || [];
+  const scanningFiles = data.files.filter(file => file.resource_id && !file.inspection_complete).map(file => file.path);
+  if (scanning) {
+    const progress = 20 + (required.length ? completed.filter(check => required.includes(check)).length / required.length * 75 : 0);
+    scanProgress(progress, data.state === 'EXTRACTING' ? 'Reading your files' : 'Agents are scanning',
+      `${completed.length} of ${required.length} checks completed. These files are inspected together; findings appear when the checks finish.`, scanningFiles);
+  } else if (data.state !== 'NOT_STARTED' || !data.task_session_id) {
+    scanProgress(data.coverage_complete ? 100 : Math.min(95, 20 + (required.length ? completed.length / required.length * 75 : 0)),
+      data.coverage_complete ? 'Scan complete' : 'Scan incomplete',
+      data.coverage_complete ? `All required checks completed for ${done} files.` : 'Some files or required checks could not be completed. Review the report below.');
+    $('folder-heading').textContent = flagged ? `${flagged} suspicious ${flagged === 1 ? 'file' : 'files'} found` : data.coverage_complete ? 'No suspicious files found' : 'Some files could not be inspected';
+    notice(data.coverage_complete ? 'Scan finished. Your file report is ready.' : 'Scan finished with incomplete coverage.', !data.coverage_complete);
+  }
+  const errors = new Set((data.inspection_errors || []).map(error => safeCode(error.code)));
+  const diagnosticInfo = {
+    MODEL_PROVIDER_TLS_ERROR:'The secure connection to the inspection provider failed.',
+    MODEL_PROVIDER_UNAUTHENTICATED:'The inspection provider rejected the API key.',
+    MODEL_PROVIDER_FORBIDDEN:'The inspection provider denied access.',
+    MODEL_PROVIDER_RATE_LIMITED:'The inspection provider reached a usage limit.',
+    MODEL_PROVIDER_REQUEST_REJECTED:'The inspection provider rejected the model request.',
+    MODEL_TIMEOUT:'The model inspection timed out.',
+    MODEL_RESPONSE_INCOMPLETE:'The model response ended before its inspection was complete.',
+    MODEL_RESPONSE_INVALID:'The model did not return a valid inspection report.',
+    BUDGET_EXHAUSTED:'The inspection reached its model budget.',
+    MODEL_REPORT_INVALID:'A model report had an invalid format after bounded retries.',
+    SOURCE_REFERENCE_INVALID:'A model report could not provide valid source references.',
+    MODEL_FINDINGS_INVALID:'A model report contained invalid finding categories or references.',
+    TASK_OUTPUT_INVALID:'The task-result check could not produce a valid source-backed result.',
+    SOURCE_QUOTE_NOT_UNIQUE:'The task-result check could not uniquely match a source quote.',
+    SOURCE_VALUE_MISMATCH:'The task-result check did not match the source value.',
+    MISSING_VIEWS:'A model report did not confirm inspection of every source view.',
+    DEADLINE_EXCEEDED:'An inspection reached its deadline.',
+    MODEL_BUDGET:'An inspection reached its call budget.',
+  };
+  $('folder-summary').textContent = `${done} / ${data.file_count} files inspected; ${flagged} flagged. ${data.coverage_complete ? 'Coverage complete for this uploaded snapshot.' : pending ? 'Inspection in progress or incomplete.' : 'Coverage incomplete: some files could not be inspected.'} ${data.collector_evidence?.length ? 'A forbidden dummy action was recorded for the combined set.' : ''}`;
+  if (Array.isArray(data.required_checks) && data.required_checks.length && Array.isArray(data.completed_checks)) {
+    $('folder-summary').textContent = `${data.completed_checks.length} / ${data.required_checks.length} required checks completed. ` + $('folder-summary').textContent;
+    const failed = Object.entries(data.inspection_statuses || {}).filter(([, status]) => ['ERROR','INCOMPLETE'].includes(status));
+    if (failed.length) $('folder-summary').textContent += ' Incomplete checks: ' + failed.map(([role]) => roleInfo[role] || 'Required inspection').join(', ') + '.';
+  }
+  if (errors.size && !data.coverage_complete) $('folder-summary').textContent += ' ' + [...errors].map(code => diagnosticInfo[code] || 'The inspection provider failed to return a report.').join(' ');
+  else if (!data.coverage_complete && data.reason_codes?.includes('INSPECTION_ERROR')) $('folder-summary').textContent += ' A required inspection failed; this is not a clean result.';
+  $('folder-reference').textContent = `Folder ID for MCP: ${data.folder_id}${data.scan_id ? ' · Scan: ' + validId(data.scan_id) : ''}`;
+  $('folder-files').replaceChildren();
+  for (const file of [...data.files].sort((a, b) => (b.status === 'FLAGGED') - (a.status === 'FLAGGED'))) {
+    if (typeof file.path !== 'string' || file.path.length > 512 || !Array.isArray(file.finding_categories) || !Array.isArray(file.evidence_ids)) throw new Error('SERVICE_UNAVAILABLE');
+    const item = document.createElement('li');
+    const meanings = {FLAGGED:'Suspicious findings; review required', NO_FINDINGS:'Checks complete; no findings under this task', PENDING:'Waiting for checks', INCOMPLETE:'Checks incomplete', UNSUPPORTED_FORMAT:'Unsupported format; not scanned', LIMIT_EXCEEDED:'Over scan limits; not scanned', UPLOAD_FAILED:'Upload failed; not scanned'};
+    if (!meanings[file.status]) throw new Error('SERVICE_UNAVAILABLE');
+    item.className = 'file-result'; item.dataset.status = file.status;
+    const icon = document.createElement('span'); icon.className = 'file-mark'; icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = file.status === 'FLAGGED' ? '!' : file.status === 'NO_FINDINGS' ? '✓' : '–';
+    const content = document.createElement('div'); content.className = 'file-result-content';
+    const name = document.createElement('strong'); name.textContent = file.path;
+    const explanation = document.createElement('p');
+    explanation.textContent = meanings[file.status] + (file.status === 'FLAGGED' && !file.inspection_complete ? ' (checks incomplete)' : '');
+    content.append(name, explanation);
+    if (file.finding_categories.length) {
+      const categories = document.createElement('p'); categories.className = 'finding-labels';
+      categories.textContent = file.finding_categories.map(code => findingInfo[safeCode(code)]?.[0] || readableName(safeCode(code))).join(' · ');
+      content.append(categories);
+    }
+    item.append(icon, content);
+    for (const evidenceId of file.evidence_ids.slice(0, 20)) {
+      validId(evidenceId);
+      const button = document.createElement('button'); button.className = 'secondary'; button.textContent = 'Review evidence';
+      button.addEventListener('click', () => viewEvidence(evidenceId, {title:'Folder finding', meaning:'An inspector flagged this file. This is an allegation with supporting source references.', role:'Folder inspector'}));
+      content.append(button);
+    }
+    $('folder-files').append(item);
+  }
+}
+async function pollFolder(generation) {
+  if (generation !== state.generation || !state.folder) return;
+  try {
+    const data = await api(`/v1/folders/${state.folder}`);
+    if (generation !== state.generation) return;
+    renderFolder(data);
+    if (!['QUEUED','EXTRACTING','INSPECTING'].includes(data.state)) return;
+    state.folderDelay = Math.min(Math.round(state.folderDelay * 1.5), 8000);
+    state.folderTimer = setTimeout(() => pollFolder(generation), state.folderDelay);
+  } catch (error) {
+    if (generation !== state.generation) return;
+    $('folder-summary').textContent = 'Folder status unavailable; coverage cannot be confirmed.';
+    state.folderScanning = false; updateScanControls();
+    scanProgress(0, 'Scan status unavailable', 'We could not confirm progress. No clean result is confirmed.');
+    fail(error);
+  }
+}
+$('folder-form')?.addEventListener('submit', event => {
+  event.preventDefault();
+  exclusive($('folder-button'), async () => {
+    invalidate(); const generation = state.generation;
+    const files = state.selectedFiles;
+    if (!files.length || files.length > 100) {
+      notice('Select a nonempty folder with at most 100 files. No files were uploaded.', true); return;
+    }
+    const supported = files.filter(item => folderMedia(item.path));
+    const overBudget = supported.length > 10 || supported.reduce((sum, item) => sum + item.file.size, 0) > 2 * 1024 * 1024;
+    const entries = [];
+    for (const {file, path} of files) {
+      scanProgress(entries.length / files.length * 20, 'Uploading your files', `Preparing ${path}`, files.map(item => item.path));
+      if (generation !== state.generation) return;
+      if (!path || path.length > 512 || path.startsWith('/') || path.includes('\\') || path.includes(':') || /[\x00-\x1f\x7f]/.test(path) || path.split('/').some(part => ['', '.', '..'].includes(part))) throw new Error('INVALID_REQUEST');
+      const media = folderMedia(path);
+      const entry = {path, size_bytes:file.size, status:!media ? 'UNSUPPORTED_FORMAT' : overBudget || file.size > 1024 * 1024 ? 'LIMIT_EXCEEDED' : 'STORED'};
+      if (entry.status === 'STORED') {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let binary = '';
+        for (let start = 0; start < bytes.length; start += 16384) binary += String.fromCharCode(...bytes.subarray(start, start + 16384));
+        try {
+          const resource = await api('/v1/resources', {media_type:media, content_base64:btoa(binary)});
+          if (resource.storage_state !== 'STORED') throw new Error('SERVICE_UNAVAILABLE');
+          entry.resource_id = validId(resource.resource_id);
+        } catch (error) {
+          if (['UNAUTHENTICATED','FORBIDDEN','CONTEXT_CHANGED'].includes(error.message)) throw error;
+          entry.status = 'UPLOAD_FAILED';
+        }
+      }
+      entries.push(entry);
+      notice(`Preparing folder: ${entries.length} / ${files.length} files.`);
+    }
+    if (generation !== state.generation) return;
+    const folder = await api('/v1/folders', {entries});
+    if (generation !== state.generation) return;
+    state.folder = validId(folder.folder_id); state.folderDelay = 1000;
+    renderFolder(folder);
+    const started = await api(`/v1/folders/${state.folder}/inspect`, {});
+    if (generation !== state.generation) return;
+    renderFolder(started); $('folder-upload').value = '';
+    if (state.folderScanning) notice('Your agents are checking the uploaded files.');
+    await pollFolder(generation);
   });
 });
 $('policy').addEventListener('change', invalidate);
@@ -491,8 +643,6 @@ $('scan-form').addEventListener('submit', event => {
     const task = await api('/v1/task-sessions', {policy_id: $('policy').value, resource_ids: resourceIds});
     if (generation !== state.generation) return;
     state.task = validId(task.task_session_id);
-    state.scanPolicy = $('policy').value; state.scanResources = resourceIds;
-    $('compare-button').disabled = resourceIds.length !== 1;
     const scan = await api('/v1/scans', {task_session_id: state.task}, crypto.randomUUID());
     if (generation !== state.generation) return;
     state.scan = validId(scan.scan_id); state.delay = 1000;
@@ -526,89 +676,7 @@ $('result-button').addEventListener('click', () => exclusive($('result-button'),
   const scan = state.scan, generation = state.generation;
   const data = await api(`/v1/scans/${scan}/result`);
   if (generation !== state.generation || !canReadResult()) return;
-  $('result-replay-banner').hidden = data.inference_mode !== 'REPLAY';
-  renderText('result', data); renderProvenance(scan, data); $('result-panel').hidden = false;
-}));
-const sourceCache = new Map();
-function renderProvenance(scan, data) {
-  const list = $('value-list');
-  list.replaceChildren(); sourceCache.clear();
-  $('source-view').hidden = $('source-caption').hidden = true; $('source-view').replaceChildren();
-  const output = data?.result?.output || {};
-  const items = [];
-  if (output.fields && typeof output.fields === 'object') {
-    for (const [name, field] of Object.entries(output.fields).slice(0, 16)) {
-      if (field && typeof field === 'object' && !field.absent) items.push({label: readableName(name.toUpperCase()), value: String(field.value ?? ''), refs: field.source_refs});
-      else items.push({label: readableName(name.toUpperCase()), value: 'Not present in the source', refs: []});
-    }
-  }
-  for (const statement of (Array.isArray(output.statements) ? output.statements.slice(0, 32) : [])) {
-    items.push({label: 'Statement', value: String(statement?.text ?? ''), refs: statement?.source_refs});
-  }
-  for (const item of items) {
-    const refs = (Array.isArray(item.refs) ? item.refs : []).filter(r => idPattern.test(r?.resource_id || '') && digestPattern.test(r?.view_hash || '')
-      && Number.isInteger(r.start) && Number.isInteger(r.end) && r.start >= 0 && r.end > r.start).slice(0, 8);
-    const li = element('li');
-    li.append(element('span', `${item.label}: `, 'value-label'));
-    if (!refs.length) { li.append(element('span', item.value.slice(0, 2000))); list.append(li); continue; }
-    const button = element('button', item.value.slice(0, 2000), 'value-button secondary');
-    button.addEventListener('click', () => exclusive(button, () => showSource(scan, refs[0], item.label)));
-    li.append(button);
-    if (refs.length > 1) li.append(element('span', ` (${refs.length} sources; showing the first)`, 'hint'));
-    list.append(li);
-  }
-}
-async function showSource(scan, ref, label) {
-  const generation = state.generation;
-  const key = `${ref.resource_id}/${ref.view_hash}`;
-  let view = sourceCache.get(key);
-  if (!view) {
-    view = await api(`/v1/scans/${validId(scan)}/sources/${validId(ref.resource_id)}/${ref.view_hash}`);
-    if (generation !== state.generation || !canReadResult()) return;
-    if (view.offset_unit !== 'UNICODE_CODE_POINT' || typeof view.text !== 'string') throw new Error('SERVICE_UNAVAILABLE');
-    sourceCache.set(key, view);
-  }
-  // Spans are half-open Unicode code-point offsets; JS strings are UTF-16, so index code points.
-  const points = Array.from(view.text);
-  const pre = $('source-view');
-  pre.replaceChildren();
-  if (ref.end > points.length) {
-    pre.append(document.createTextNode(view.text));
-    $('source-caption').textContent = `${label}: the cited span lies beyond the displayed part of this view.`;
-  } else {
-    const mark = element('mark', points.slice(ref.start, ref.end).join(''), 'source-mark');
-    pre.append(document.createTextNode(points.slice(0, ref.start).join('')), mark, document.createTextNode(points.slice(ref.end).join('')));
-    $('source-caption').textContent = `${label}: characters ${ref.start}–${ref.end} of ${readableName(String(view.kind || 'view').toUpperCase())} view (resource ${ref.resource_id}).`;
-    requestAnimationFrame(() => mark.scrollIntoView({block: 'center', behavior: 'smooth'}));
-  }
-  $('source-caption').hidden = false; pre.hidden = false;
-}
-function renderBaseline(data) {
-  const body = $('baseline-body');
-  body.replaceChildren();
-  if (!data) {
-    body.append(element('p', 'No recorded baseline for this input and task. Run make eval to record baselines for the demo inputs.', 'hint'));
-    return;
-  }
-  body.append(element('p', `Model ${String(data.model).slice(0, 80)} · ${String(data.inference).slice(0, 32)} · recorded ${String(data.recorded_at).slice(0, 32)}`, 'hint'));
-  if (data.failed) { body.append(element('p', 'The naive agent run failed for this input, so there is no baseline outcome.', 'hint')); return; }
-  const calls = Array.isArray(data.tool_calls) ? data.tool_calls.slice(0, 16) : [];
-  body.append(element('h3', calls.length ? 'Tools it executed immediately (simulated)' : 'Tools it executed'));
-  const list = element('ul', undefined, 'flag-list');
-  for (const call of calls) list.append(element('li', `${String(call.operation).slice(0, 64)} ${String(call.arguments).slice(0, 300)}`, 'forbidden'));
-  if (!calls.length) list.append(element('li', 'None', 'hint'));
-  body.append(list, element('h3', 'What it answered'), element('pre', String(data.answer ?? '').slice(0, 4000)));
-}
-$('compare-button').addEventListener('click', () => exclusive($('compare-button'), async () => {
-  const resources = state.scanResources || [];
-  const resource = state.resources.find(r => r.id === resources[0]);
-  if (resources.length !== 1 || !resource?.hash || !/^[a-z_]{1,32}$/.test(state.scanPolicy || '')) throw new Error('INVALID_REQUEST');
-  const generation = state.generation;
-  let data = null;
-  try { data = await api(`/v1/baselines/${state.scanPolicy}/${resource.hash}`); }
-  catch (error) { if (error.message !== 'NOT_FOUND') throw error; }
-  if (generation !== state.generation) return;
-  renderBaseline(data); $('baseline-panel').hidden = false;
+  renderText('result', data); $('result-panel').hidden = false;
 }));
 $('chat-button').addEventListener('click', () => exclusive($('chat-button'), async () => {
   const generation = state.generation;
@@ -682,6 +750,7 @@ async function connectSession() {
   state.csrf = session.csrf_token;
   $('identity').textContent = session.display_name || 'Authenticated session';
   $('upload-button').disabled = false;
+  updateScanControls();
   if ($('login-form')) $('login-form').hidden = true;
   notice('Session connected. Upload content to begin.');
 }

@@ -1,0 +1,4 @@
+invoice_id,customer,amount,currency,due_date
+TEST-100,Fictional Maple Studio,25.50,USD,2026-11-01
+TEST-101,Fictional Harbor Workshop,40.00,USD,2026-11-08
+TEST-102,Fictional Cedar Library,14.25,USD,2026-11-15

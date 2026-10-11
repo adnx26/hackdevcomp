@@ -137,6 +137,71 @@ class ExtractionTests(unittest.TestCase):
 
 
 class InspectionTests(unittest.TestCase):
+    def test_malformed_behavior_report_is_retried_without_committing_findings(self):
+        a, io = assignment('behavior')
+        malformed = reply(a)
+        malformed['findings'] = [{'category':'OVERRIDE_ATTEMPT',
+            'source_references':[dict(a['views'][0], span=[0,5])]}]
+        model = Model([malformed, reply(a)])
+        result = inspect(a, io, model, Collector())
+        self.assertEqual(result['inspection_status'], 'COMPLETE')
+        self.assertEqual(result['findings'], [])
+        self.assertEqual(io.artifacts, [])
+        self.assertEqual(len(model.requests), 2)
+        self.assertEqual(model.requests[1]['history'][0]['validation_error']['code'], 'MODEL_FINDINGS_INVALID')
+        self.assertEqual(model.requests[0]['documents'], model.requests[1]['documents'])
+        self.assertEqual(model.requests[0]['bindings'], model.requests[1]['bindings'])
+
+    def test_invalid_task_output_can_be_replaced_only_by_a_valid_report(self):
+        a, io = assignment('behavior')
+        malformed = reply(a)
+        malformed['task_output']['kind'] = 'summary'
+        model = Model([malformed, reply(a)])
+        result = inspect(a, io, model, Collector())
+        self.assertEqual(result['inspection_status'], 'COMPLETE')
+        self.assertEqual(model.requests[1]['history'][0]['validation_error']['code'], 'TASK_OUTPUT_INVALID')
+        self.assertNotIn('kind', result['task_output'])
+
+    def test_persistently_invalid_reports_exhaust_bounded_retries(self):
+        a, io = assignment('behavior')
+        malformed = dict(reply(a), extra='private-model-content')
+        model = Model([malformed] * 4)
+        result = inspect(a, io, model, Collector())
+        self.assertEqual(result['inspection_status'], 'ERROR')
+        self.assertEqual(result['reason_codes'], ['MODEL_REPORT_INVALID'])
+        self.assertEqual(len(model.requests), 3)
+        self.assertNotIn('private-model-content', json.dumps(result))
+        self.assertNotIn('private-model-content', json.dumps(model.requests[1]['history']))
+        self.assertEqual(io.artifacts, [])
+        self.assertEqual(result['checked_views'], [])
+
+    def test_repair_does_not_exceed_assignment_call_budget(self):
+        a, io = assignment('behavior')
+        a['limits']['max_model_calls'] = 1
+        model = Model([{}, reply(a)])
+        result = inspect(a, io, model, Collector())
+        self.assertEqual(result['inspection_status'], 'ERROR')
+        self.assertEqual(len(model.requests), 1)
+
+    def test_forbidden_tool_proof_survives_report_repair_without_replaying_tool(self):
+        a, io = assignment('behavior')
+        collector = Collector()
+        model = Model([{'tool_calls':[{'operation':'send_email','arguments':{}}]}, {}, reply(a)])
+        result = inspect(a, io, model, collector)
+        self.assertEqual(result['inspection_status'], 'COMPLETE')
+        self.assertEqual(result['collector_event_ids'], ['event-1'])
+        self.assertEqual(len(collector.calls), 1)
+        self.assertEqual(result['findings'][0]['category'], 'OBSERVED_FORBIDDEN_ACTION')
+
+    def test_report_repair_cannot_replay_a_tool_call(self):
+        a, io = assignment('behavior')
+        collector = Collector()
+        tool = {'tool_calls':[{'operation':'send_email','arguments':{}}]}
+        result = inspect(a, io, Model([tool, {}, tool]), collector)
+        self.assertEqual(result['inspection_status'], 'ERROR')
+        self.assertEqual(result['collector_event_ids'], ['event-1'])
+        self.assertEqual(len(collector.calls), 1)
+
     def test_all_roles_complete_and_bindings(self):
         for role in ('instruction', 'data', 'behavior'):
             a, io = assignment(role)
