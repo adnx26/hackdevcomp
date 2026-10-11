@@ -4,7 +4,7 @@ Source: `docs/teammate-c-inspection-agents.md`, together with system-design sect
 
 ## Entry points and versions
 
-`protection_gateway.workers.extract(assignment, restricted_io)` and `inspect(assignment, restricted_io, model_client, simulated_tools)` are synchronous JSON-mapping boundaries. Extractor: `c-extractor-1`; build: `c-workers-1`; prompts: `c-prompts-2`. Inspector role keys are `instruction`, `data`, `behavior`; the gateway's `CoreRuntimeBridge` maps these to the canonical roster. There is no production fallback when a callback is unavailable.
+`protection_gateway.workers.extract(assignment, restricted_io)` and `inspect(assignment, restricted_io, model_client, simulated_tools)` are synchronous JSON-mapping boundaries. Extractor: `c-extractor-1`; build: `c-workers-2`; prompts: `c-prompts-2`. Inspector role keys are `instruction`, `data`, `behavior`; the gateway's `CoreRuntimeBridge` maps these to the canonical roster. There is no production fallback when a callback is unavailable.
 
 Historical handoff: A and B had no implementations in the documentation baseline. The current local composition and verification are documented in `docs/testing.md`. The following callback details and supplemental assignment fields are provisional integration choices, not additions to canonical schemas. A must review exact output/reference fields and B must implement and review these adapters before activation. The implementation consumes opaque policy hashes unchanged; A owns canonical serialization and validation.
 
