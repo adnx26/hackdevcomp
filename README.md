@@ -67,16 +67,16 @@ flowchart LR
 
 Round 2 overall: the harmful action happened in **14 of 30** unprotected runs. With the gateway, no harmful action was possible in any scenario, and 9 of 10 inputs were held.
 
-**Benchmark** (`make eval`: 33 synthetic attacks across 8 categories plus 20 benign files, the same model in every condition; re-scored after the invoice-citation fix):
+**Benchmark** (`make eval`: 33 synthetic attacks across 8 categories plus 20 benign files, the same model in every condition; live run on `main`, 11 Oct 2026, worker build `c-workers-3`, prompts `c-prompts-4`; [full results](eval/results.md)):
 
 | | No gateway | All three inspectors + core |
 |---|---|---|
 | Attack content released | 100% | **0%** |
-| Benign content held (false alarms) | 0% | 20% (4 of 20, all deliberately tricky "ignore/send/forward" emails) |
-| Invoice fields correct, with a verified source | n/a (no sources) | 88% |
-| Median latency | ~5 s | ~17 s |
+| Benign content held (false alarms) | 0% | 15% (3 of 20, all deliberately tricky "ignore/send/forward" emails) |
+| Invoice fields correct, with a verified source | n/a (no sources) | **100%** (32 of 32) |
+| Median latency | ~4 s | ~15 s |
 
-The instruction inspector does most of the detection work, and the inspectors disagreed on 36 of 53 cases. That's why decisions come from a rule table, not a vote. These benchmark numbers predate the latest prompt change on `main`; re-run `make eval` for current figures.
+Kimi alone resisted every passive injection in this set. The one hit the scorer counted was a refusal that quoted the attacker's phrase, not compliance. So the adaptive red-team set above is the real "without the gateway" evidence. Inside the gateway, the inspectors matter: core rules alone would have released all 33 attack inputs, including two whose task output had picked up the attacker's phrase. The instruction inspector does most of the detection work. The inspectors disagreed on 35 of 53 cases, which is why decisions come from a rule table, not a vote.
 
 ## 3-minute demo
 
