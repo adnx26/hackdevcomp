@@ -22,7 +22,7 @@ import sys
 from typing import Callable, Iterable
 
 from . import CONTRACT_VERSION
-from .runtime.config import RuntimeConfig
+from .runtime.config import RuntimeConfig, local_environment
 from .runtime.runtime import Runtime
 
 log = logging.getLogger("protection_gateway.bootstrap")
@@ -110,6 +110,8 @@ class Gateway:
 
     def close(self) -> None:
         self.runtime.shutdown()
+        if callable(getattr(self.core, "close", None)):
+            self.core.close()
 
 
 def _optional_module(name: str):
@@ -140,6 +142,7 @@ def _attach_adapters(gateway: Gateway, config: RuntimeConfig) -> None:
     # No model_client_factory is injected: what the assistant model may be shown for a scan is
     # not agreed with D yet, so D's controlled chat stays in its deterministic mode.
     app = adapter_class(core=core, allowed_origins=config.allowed_origins, web_root=config.web_root,
+                        **({"public_ui": True} if config.dev_mode else {}),
                         **{name: getattr(core, name, None) for name in ADAPTER_CORE_HOOKS})
     for prefix in ADAPTER_PREFIXES:
         gateway.mount(prefix, app, requires=("core", "adapters"))
@@ -156,9 +159,15 @@ def build_gateway(config: RuntimeConfig | None = None, *, runtime: Runtime | Non
     config = config or RuntimeConfig.from_env()
     runtime = runtime or Runtime(config)
     gateway = Gateway(runtime)
+    if config.dev_mode:
+        from .runtime.composition import prepare_development
+        prepare_development(config)
     runtime.activate()
     core_module = _optional_module("protection_gateway.core")
-    if core_module is not None and hasattr(core_module, "build_core"):
+    if config.dev_mode:
+        from .runtime.composition import attach_core
+        attach_core(gateway, config)
+    elif core_module is not None and hasattr(core_module, "build_core"):
         gateway.core = core_module.build_core(runtime=runtime)
         runtime.bind_core(gateway.core)
         if hasattr(core_module, "register"):
@@ -188,9 +197,11 @@ def server_options(config: RuntimeConfig) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="print capability status and exit non-zero unless the complete workflow is available")
+    parser.add_argument("--dev", action="store_true", help="enable loopback development core with private unencrypted local storage")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    config = RuntimeConfig.from_env()
+    config = RuntimeConfig.from_env(local_environment())
+    config.dev_mode = config.dev_mode or args.dev
     options = None if args.check else server_options(config)
     gateway = build_gateway(config)
     if args.check:

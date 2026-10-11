@@ -1432,6 +1432,8 @@ class GatewayService:
             "decision_expires_at": scan["decision_expires_at"],
             "review": {"eligible": eligible, **({"result_digest": output["output_digest"]} if eligible else {})},
         }
+        exception = eligible and output and self._active_exception(scan, principal.user_id, output['output_digest'])
+        status['review_exception'] = {'active': bool(exception), **({'expires_at': exception['expires_at']} if exception else {})}
         return status
 
     def _source_expiry(self, scan):
@@ -1598,6 +1600,8 @@ class GatewayService:
         if row["deleted_at"] or parse_iso(row["expires_at"]) <= self._now():
             raise GatewayError(ErrorCode.NOT_FOUND, "evidence expired")
         self._source_expiry(self._scan(row["scan_id"]))
+        scan = self._scan(row["scan_id"])
+        source_excerpts = []
         if row["source"] == "COLLECTOR":
             ev = self.db.query_one(
                 "SELECT * FROM collector_events WHERE event_id = ? AND tenant_id = ?", (row["collector_event_id"], row["tenant_id"])
@@ -1608,6 +1612,49 @@ class GatewayService:
             )
         else:
             text = self.store.get(row["storage_ref"], row["tenant_id"]).decode("utf-8", errors="replace")
+            try:
+                artifact = json.loads(text)
+            except (TypeError, ValueError):
+                artifact = None
+            if isinstance(artifact, dict) and isinstance(artifact.get("model_findings"), list):
+                view_hashes = {}
+                for extraction in self.db.query_all(
+                    "SELECT resource_id, views_json FROM extractions WHERE scan_id = ?", (scan["scan_id"],)
+                ):
+                    for view in _loads(extraction["views_json"], []):
+                        view_hashes[(extraction["resource_id"], view.get("view_id"))] = view.get("view_hash")
+                source_cache = {}
+                for finding_index, finding in enumerate(artifact["model_findings"][:64]):
+                    if not isinstance(finding, dict) or not isinstance(finding.get("source_references"), list):
+                        continue
+                    for reference_index, ref in enumerate(finding["source_references"][:20]):
+                        if not isinstance(ref, dict):
+                            continue
+                        resource_id, view_id = ref.get("resource_id"), ref.get("view_id")
+                        span = ref.get("span")
+                        if (not isinstance(resource_id, str) or not isinstance(view_id, str)
+                                or view_hashes.get((resource_id, view_id)) != ref.get("view_hash")
+                                or not isinstance(span, list) or len(span) != 2
+                                or any(type(offset) is not int for offset in span)):
+                            continue
+                        source_key = (resource_id, ref["view_hash"])
+                        if source_key not in source_cache:
+                            source_cache[source_key] = self._view_text(scan, resource_id, ref["view_hash"])
+                        source_text = source_cache[source_key]
+                        if source_text is None or span[0] < 0 or span[1] < span[0] or span[1] > len(source_text):
+                            continue
+                        excerpt_start = max(0, span[0] - 100)
+                        excerpt_end = min(len(source_text), excerpt_start + 520)
+                        source_excerpts.append({
+                            "finding_index": finding_index,
+                            "reference_index": reference_index,
+                            "text": source_text[excerpt_start:excerpt_end],
+                            "truncated": excerpt_start > 0 or excerpt_end < len(source_text) or span[1] > excerpt_end,
+                        })
+                        if len(source_excerpts) >= 64:
+                            break
+                    if len(source_excerpts) >= 64:
+                        break
         limit = self.config.limits.evidence_view_chars
         return {
             "evidence_id": evidence_id,
@@ -1616,6 +1663,7 @@ class GatewayService:
             "source": row["source"],
             "content_type": "text/plain",
             "text_escaped": html.escape(text[:limit], quote=True),
+            "source_excerpts": source_excerpts,
             "truncated": len(text) > limit,
         }
 

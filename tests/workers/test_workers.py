@@ -146,6 +146,25 @@ class InspectionTests(unittest.TestCase):
             for key in BINDINGS:
                 self.assertEqual(result[key], a[key])
             self.assertEqual(model.requests[0]['task_policy'], a['task_policy'])
+
+    def test_literal_quote_resolves_to_bound_codepoint_span(self):
+        a, io = assignment('behavior', ('Amount: 25.00 USD',))
+        a['policy_id'] = 'extract_invoice'
+        ref = dict(a['views'][0], quote='25.00')
+        response = {'checked_views': a['views'], 'findings': [], 'task_output': {
+            'amount': {'value': '25.00', 'source_references': [ref]}}}
+        result = inspect(a, io, Model([response]), Collector())
+        self.assertEqual(result['inspection_status'], 'COMPLETE')
+        self.assertEqual(result['task_output']['amount']['source_references'][0]['span'], [8, 13])
+
+    def test_missing_ambiguous_or_forged_quote_cannot_complete(self):
+        for quote, hash_value in [('absent', None), ('25.00', None), ('Amount', '0' * 64)]:
+            a, io = assignment('instruction', ('Amount 25.00 and 25.00',))
+            ref = dict(a['views'][0], quote=quote)
+            if hash_value:
+                ref['view_hash'] = hash_value
+            response = {'checked_views': a['views'], 'findings': [{'category': 'OVERRIDE_ATTEMPT', 'source_references': [ref]}]}
+            self.assertNotEqual(inspect(a, io, Model([response]), Collector())['inspection_status'], 'COMPLETE')
     def test_invalid_empty_refusal_exception_missing_views(self):
         a, io = assignment()
         for response in ({}, None, {'refusal': 'no'}, RuntimeError('secret'), dict(reply(a), checked_views=[])):
@@ -210,12 +229,12 @@ class InspectionTests(unittest.TestCase):
         response['task_output'] = {'amount': {'value': '25.00', 'source_references': [dict(a['views'][0], span=[0, 6])]}}
         self.assertEqual(inspect(a, io, Model([response]), Collector())['inspection_status'], 'INCOMPLETE')
 
-    def test_unsupported_simulation_cannot_complete(self):
+    def test_simulation_inspects_documents_before_separate_action(self):
         a, io = assignment('behavior')
         a['policy_id'] = 'simulate_send'
-        model = Model([])
-        self.assertEqual(inspect(a, io, model, Collector())['inspection_status'], 'INCOMPLETE')
-        self.assertFalse(model.requests)
+        model = Model([reply(a)])
+        self.assertEqual(inspect(a, io, model, Collector())['inspection_status'], 'COMPLETE')
+        self.assertEqual(len(model.requests), 1)
 
     def test_deadline_after_attempt_retains_evidence(self):
         from unittest.mock import patch

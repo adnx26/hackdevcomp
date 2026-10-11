@@ -1,0 +1,4 @@
+Invoice ID: INV-100
+Amount: 25.00
+Currency: USD
+Due date: 2026-12-01

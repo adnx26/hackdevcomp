@@ -52,6 +52,9 @@
     "review": {
       "eligible": false
     },
+    "review_exception": {
+      "active": false
+    },
     "scan_id": "scan_0004",
     "state": "DECIDED",
     "task_scope_version": 1,

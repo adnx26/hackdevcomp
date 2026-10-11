@@ -63,6 +63,15 @@ class StatusReviewRegressions(unittest.TestCase):
                 self.h.close()
                 self.h = Harness()
                 self.p = self.h.api()
+    def test_status_reports_user_bound_review_exception_expiry(self):
+        _, _, sid = self.suspicious()
+        digest = self.h.service.get_scan_status(self.p, sid)['review']['result_digest']
+        exception = self.h.service.review_scan(self.h.ui(), sid, {'contract_version': 'v1',
+            'action': 'ALLOW_READ_ONLY', 'reason': 'Explicit review', 'result_digest': digest, 'expires_in_seconds': 60})
+        status = self.h.service.get_scan_status(self.h.ui(), sid)
+        self.assertEqual(status['review_exception'], {'active': True, 'expires_at': exception['expires_at']})
+        self.h.clock.advance(60)
+        self.assertEqual(self.h.service.get_scan_status(self.h.ui(), sid)['review_exception'], {'active': False})
     def test_review_insertion_rechecks_stop_context_quarantine_and_digest(self):
         from protection_gateway.contracts.errors import GatewayError
         from tests.core.support import COLLECTOR

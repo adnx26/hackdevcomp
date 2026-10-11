@@ -13,8 +13,8 @@ class FullStackGate(unittest.TestCase):
         required = os.environ.get("GATEWAY_REQUIRE_FULL_STACK") == "1"
         if not factory_path:
             if required:
-                self.fail("Release gate requires GATEWAY_FULL_STACK_FACTORY; A/B/C are unavailable")
-            self.skipTest("A/B/C and real SLIM driver are not configured; not a release pass")
+                self.fail("Legacy reviewed-scenario release gate requires GATEWAY_FULL_STACK_FACTORY")
+            self.skipTest("Legacy reviewed-scenario driver is not configured; actual local stack is tested by test_gateway_e2e.py")
         module, name = factory_path.split(":", 1)
         scenarios = json.loads((Path(__file__).parents[1] / "fixtures/workflow/scenarios.json").read_text())
         # A/C must review and record expectations before release; no local

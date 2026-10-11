@@ -27,6 +27,7 @@ log = logging.getLogger("protection_gateway.runtime.model_broker")
 
 # Approved data processors: provider -> (pinned endpoint, approved models).
 APPROVED_PROVIDERS = {
+    "kimi": ("https://api.moonshot.ai/v1", ("kimi-k3",)),
     "anthropic": ("https://api.anthropic.com", ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1")),
 }
 
@@ -47,10 +48,13 @@ class ModelConfig:
     max_request_bytes: int = 512 * 1024
     job_token_budget: int = 200_000
     job_call_budget: int = 16
+    reasoning_effort: str = "low"
 
     def __post_init__(self):
         approved = APPROVED_PROVIDERS.get(self.provider)
         if approved is None or self.model not in approved[1]:
+            raise RuntimeUnavailable("MODEL_CONFIGURATION_NOT_APPROVED")
+        if self.reasoning_effort not in {"low", "high", "max"}:
             raise RuntimeUnavailable("MODEL_CONFIGURATION_NOT_APPROVED")
 
     @property
@@ -58,7 +62,10 @@ class ModelConfig:
         return APPROVED_PROVIDERS[self.provider][0]
 
     def binding(self) -> dict:
-        return {"provider": self.provider, "model": self.model, "endpoint": self.endpoint, "max_output_tokens": self.max_output_tokens}
+        result = {"provider": self.provider, "model": self.model, "endpoint": self.endpoint, "max_output_tokens": self.max_output_tokens}
+        if self.provider == "kimi":
+            result["reasoning_effort"] = self.reasoning_effort
+        return result
 
     def hash(self) -> str:
         """The value A places in an assignment's `model_configuration_hash`."""

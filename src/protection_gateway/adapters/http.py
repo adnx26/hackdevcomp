@@ -30,7 +30,7 @@ class AdapterApp:
 
     def __init__(self, *, core=None, authenticate=None, verify_csrf=None,
                  session_info=None, model_client_factory=None, error_status=None,
-                 allowed_origins=(), web_root=None, sign_in_path=None):
+                 allowed_origins=(), web_root=None, sign_in_path=None, public_ui=False):
         for origin in allowed_origins:
             parsed = urlsplit(origin)
             if (parsed.scheme not in {"http", "https"} or not parsed.netloc
@@ -47,6 +47,7 @@ class AdapterApp:
         self.session_info = session_info
         self.error_status = error_status
         self.sign_in_path = sign_in_path
+        self.public_ui = public_ui
         self.web_root = Path(web_root) if web_root else Path(__file__).resolve().parents[3] / "web"
         self.assets = {}
         for filename in ("index.html", "app.js", "style.css"):
@@ -97,7 +98,8 @@ class AdapterApp:
         surface = "mcp" if path == "/mcp" else "ui"
         if surface == "mcp" and not headers.get(b"authorization", "").startswith("Bearer "):
             raise AdapterError("UNAUTHENTICATED", status=401)
-        context = await resolve(self.authenticate(scope, surface))
+        public_asset = self.public_ui and path in {"/ui", "/ui/", "/ui/app.js", "/ui/style.css"} and scope.get("method") == "GET"
+        context = True if public_asset else await resolve(self.authenticate(scope, surface))
         if context is None:
             if path in {"/ui", "/ui/"} and self.sign_in_path:
                 return 303, [(b"location", self.sign_in_path.encode("ascii"))], b""

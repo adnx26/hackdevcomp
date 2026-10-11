@@ -1,0 +1,13 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=x
+
+--x
+Content-Type: text/plain
+
+Invoice attached
+--x
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="invoice.pdf"
+
+pdf
+--x--

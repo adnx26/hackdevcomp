@@ -1,4 +1,4 @@
-"""Runtime configuration. Secrets are referenced by file path, never stored here."""
+"""Gateway-only runtime configuration; credentials never enter worker environments."""
 
 from __future__ import annotations
 
@@ -33,6 +33,9 @@ class RuntimeConfig:
     extra_python_path: tuple[Path, ...] = ()
     model: ModelConfig | None = None
     model_api_key_file: Path | None = None
+    model_api_key: str | None = field(default=None, repr=False)
+    dev_mode: bool = False
+    login_token_file: Path | None = None
     collector_key_file: Path | None = None
     ready_timeout_seconds: float = 20.0
     debug_worker_stderr: bool = False  # development only; never enable with real content
@@ -52,11 +55,14 @@ class RuntimeConfig:
             return Path(env[name]) if env.get(name) else None
 
         model = None
-        if env.get("PG_MODEL_PROVIDER"):
+        provider = env.get("PG_MODEL_PROVIDER") or ("kimi" if env.get("KIMI_API_KEY") else None)
+        if provider:
             model = ModelConfig(
-                provider=env["PG_MODEL_PROVIDER"],
-                model=env.get("PG_MODEL", "claude-opus-5-5"),
+                provider=provider,
+                model=env.get("PG_MODEL", "kimi-k3" if provider == "kimi" else "claude-opus-5-5"),
                 max_output_tokens=int(env.get("PG_MODEL_MAX_OUTPUT_TOKENS", "4096")),
+                timeout_seconds=float(env.get("PG_MODEL_TIMEOUT_SECONDS", "120")),
+                reasoning_effort=env.get("PG_MODEL_REASONING_EFFORT", "low"),
                 job_token_budget=int(env.get("PG_JOB_TOKEN_BUDGET", "200000")),
                 job_call_budget=int(env.get("PG_JOB_CALL_BUDGET", "16")),
             )
@@ -67,6 +73,9 @@ class RuntimeConfig:
             shadictl=find_shadictl(env.get("PG_SHADICTL")),
             model=model,
             model_api_key_file=path("PG_MODEL_API_KEY_FILE"),
+            model_api_key=env.get("KIMI_API_KEY") if provider == "kimi" else None,
+            dev_mode=env.get("PG_DEV_MODE") == "1",
+            login_token_file=path("PG_LOGIN_TOKEN_FILE"),
             collector_key_file=path("PG_COLLECTOR_KEY_FILE"),
             host=env.get("PG_HOST", "127.0.0.1"),
             port=int(env.get("PG_PORT", "8443")),
@@ -74,3 +83,22 @@ class RuntimeConfig:
             tls_key=path("PG_TLS_KEY"),
             allowed_origins=tuple(origin.strip() for origin in env.get("PG_ALLOWED_ORIGINS", "").split(",") if origin.strip()),
         )
+
+
+def local_environment(path: Path = REPO_ROOT / ".env") -> dict[str, str]:
+    """Read simple KEY=value entries without executing shell code; environment wins."""
+    values = {}
+    if path.is_file():
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, separator, value = line.partition("=")
+            key = key.removeprefix("export ").strip()
+            if not separator or not key.replace("_", "a").isalnum():
+                raise ValueError("Invalid .env entry")
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            values[key] = value
+    return {**values, **os.environ}

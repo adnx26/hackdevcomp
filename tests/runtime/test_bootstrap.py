@@ -53,7 +53,7 @@ def test_nothing_is_available_until_it_is_really_present(bare):
     assert all(not capabilities[name]["available"] for name in COMPLETE_WORKFLOW if name != "slim")
     assert capabilities["isolation"]["reason"] == "SANDBOX_LAUNCHER_MISSING"
     assert capabilities["model_broker"]["reason"] == "MODEL_CONFIGURATION_MISSING"
-    assert capabilities["adapters"]["reason"] == "ADAPTERS_NOT_INSTALLED"
+    assert capabilities["adapters"]["reason"] == "CORE_UNAVAILABLE"
     assert capabilities["complete_workflow"]["available"] is False and "isolation" in capabilities["complete_workflow"]["reason"]
 
 

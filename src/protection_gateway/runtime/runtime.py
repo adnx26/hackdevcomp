@@ -102,7 +102,7 @@ class Runtime:
         if reaped:
             log.warning("reaped %d worker(s) left by a previous gateway process", reaped)
         self.roster = Roster(self._roster_records, (*config.source_roots, *config.extra_python_path))
-        secret_files = [path for path in (config.model_api_key_file, config.collector_key_file) if path]
+        secret_files = [path for path in (config.model_api_key_file, config.collector_key_file, config.login_token_file) if path]
         self.sandbox = Sandbox(config.sandbox_backend, config.shadictl, config.state_dir, config.source_roots, config.extra_read_paths, secret_files, config.extra_python_path)
         try:
             self.sandbox.verify()
@@ -116,11 +116,12 @@ class Runtime:
                 raise RuntimeUnavailable("MODEL_CONFIGURATION_MISSING")
             transport = self._model_transport
             if transport is None:
-                if config.model_api_key_file is None:
+                if config.model_api_key_file is None and not config.model_api_key:
                     raise RuntimeUnavailable("MODEL_PROVIDER_CREDENTIAL_MISSING")
-                from .providers import AnthropicTransport
+                from .providers import AnthropicTransport, KimiTransport
 
-                transport = AnthropicTransport(config.model, config.model_api_key_file)
+                transport = (KimiTransport(config.model, config.model_api_key, config.model_api_key_file)
+                             if config.model.provider == "kimi" else AnthropicTransport(config.model, config.model_api_key_file))
             self.broker = ModelBroker(config.model, transport, self._core)
             self._reasons.pop("model_broker", None)
         except RuntimeUnavailable as error:

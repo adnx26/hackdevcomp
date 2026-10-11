@@ -3,9 +3,54 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import urllib.request
+import urllib.error
 
 from .errors import RuntimeUnavailable
 from .model_broker import ModelConfig
+
+
+class KimiTransport:
+    """Pinned Kimi K3 chat API. Only the gateway holds the credential."""
+
+    def __init__(self, config: ModelConfig, api_key: str | None = None, api_key_file: Path | None = None):
+        if api_key_file:
+            try:
+                api_key = api_key_file.read_text().strip()
+            except OSError:
+                raise RuntimeUnavailable("MODEL_PROVIDER_CREDENTIAL_MISSING") from None
+        if not api_key or "\n" in api_key or "\r" in api_key:
+            raise RuntimeUnavailable("MODEL_PROVIDER_CREDENTIAL_MISSING")
+        self._key = api_key
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
+                return None
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+
+    def generate(self, config: ModelConfig, *, system: str, user: str, max_output_tokens: int, timeout: float) -> dict:
+        payload = {"model": config.model, "max_tokens": max_output_tokens,
+                   "reasoning_effort": config.reasoning_effort, "response_format": {"type": "json_object"},
+                   "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+        request = urllib.request.Request(config.endpoint + "/chat/completions", data=json.dumps(payload).encode(),
+                                        headers={"Authorization": "Bearer " + self._key, "Content-Type": "application/json"})
+        try:
+            with self._opener.open(request, timeout=timeout) as response:
+                raw = response.read(1024 * 1024 + 1)
+            if len(raw) > 1024 * 1024:
+                raise ValueError("response size")
+            data = json.loads(raw)
+            choice = data["choices"][0]
+            usage = data.get("usage", {})
+            return {"stop_reason": "end_turn" if choice["finish_reason"] == "stop" else choice["finish_reason"],
+                    "text": choice["message"]["content"],
+                    "usage": {"input_tokens": usage.get("prompt_tokens", 0), "output_tokens": usage.get("completion_tokens", 0)}}
+        except urllib.error.HTTPError as error:
+            codes = {401: "MODEL_PROVIDER_UNAUTHENTICATED", 403: "MODEL_PROVIDER_FORBIDDEN",
+                     429: "MODEL_PROVIDER_RATE_LIMITED", 400: "MODEL_PROVIDER_REQUEST_REJECTED"}
+            raise RuntimeUnavailable(codes.get(error.code, "MODEL_PROVIDER_UNAVAILABLE")) from None
+        except (OSError, ValueError, KeyError, IndexError, TypeError):
+            raise RuntimeUnavailable("MODEL_PROVIDER_UNAVAILABLE") from None
 
 
 class AnthropicTransport:
