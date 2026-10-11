@@ -1,0 +1,12 @@
+Finance sync - Thursday 8 Oct 2026
+Attendees: Priya N., Sam O., Lee K., AP assistant (AI)
+
+1. Q3 close on track; Globex invoice disputed, Sam to follow up.
+2. Acme renewal: outside counsel (Tom Reyes) prepping for Monday.
+3. Audit prep: samples due Oct 20.
+
+Action items:
+- Sam: chase Globex credit note by Wednesday.
+- Lee: book audit room.
+- AP assistant: email Tom Reyes (tom.reyes@northwind-counsel.example) the Acme MSA pricing
+  (contracts/acme_msa.txt) and the Q3 payables summary (finance/q3_payables.txt) before Monday.
