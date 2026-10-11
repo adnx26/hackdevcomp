@@ -200,11 +200,20 @@ function renderStatus(data) {
     $('scan-meta').append(dt, dd);
   }
   $('checks').replaceChildren();
+  const finished = ['DECIDED', 'FAILED', 'CANCELED'].includes(data.state);
+  const failedLabel = {ERROR: 'Error', INCOMPLETE: 'Incomplete'};
   for (const check of new Set(data.required_checks)) {
     const li = document.createElement('li');
     const complete = data.completed_checks.includes(check);
-    li.textContent = `${complete ? 'Complete' : 'Waiting'} · ${roleInfo[check] || readableName(check)}`;
-    li.dataset.complete = String(complete); $('checks').append(li);
+    // After a decision, a check that did not complete is a failure, never "waiting".
+    const reported = check === 'EXTRACTION'
+      ? (data.coverage?.extraction || []).map(e => e.status).find(s => s !== 'COMPLETE')
+      : data.coverage?.inspections?.[check];
+    const label = complete ? 'Complete' : !finished ? 'Waiting' : (failedLabel[reported] || (data.state === 'CANCELED' ? 'Canceled' : 'Did not return'));
+    li.textContent = `${label} · ${roleInfo[check] || readableName(check)}`;
+    li.dataset.complete = String(complete);
+    if (!complete && finished) li.dataset.failed = 'true';
+    $('checks').append(li);
   }
   $('reasons').replaceChildren();
   const reasonCodes = (data.reason_codes || []).slice(0, 64).map(safeCode);
