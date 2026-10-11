@@ -315,7 +315,9 @@ async function viewEvidence(evidenceId, detail) {
     if (Array.isArray(sourceExcerpts)) {
       sourceExcerpts.slice(0, 64).forEach(excerpt => {
         if (!excerpt || typeof excerpt.text !== 'string') return;
-        const finding = Number.isInteger(excerpt.finding_index) ? parsed.model_findings?.[excerpt.finding_index] : null;
+        const finding = Number.isInteger(excerpt.finding_index) ? parsed?.model_findings?.[excerpt.finding_index] : null;
+        const reference = Number.isInteger(excerpt.reference_index) ? finding?.source_references?.[excerpt.reference_index] : null;
+        if (detail?.resourceId && reference?.resource_id !== detail.resourceId) return;
         const findingTitle = findingInfo[finding?.category]?.[0];
         if (findingTitle) {
           const label = document.createElement('h3'); label.textContent = findingTitle; $('evidence-summary').append(label);
@@ -324,7 +326,7 @@ async function viewEvidence(evidenceId, detail) {
         block.textContent = `${excerpt.truncated ? '…' : ''}${excerpt.text}${excerpt.truncated ? '…' : ''}`;
         $('evidence-summary').append(block);
       });
-      if (!$('evidence-summary').childElementCount) $('evidence-summary').textContent = 'The record has no source excerpt.';
+      if (!$('evidence-summary').childElementCount) $('evidence-summary').textContent = detail?.resourceId ? 'The record has no source excerpt for this file.' : 'The record has no source excerpt.';
     } else {
       const textLine = text.match(/(?:^|\s)operation=([^\s]+)/);
       if (textLine) {
@@ -563,7 +565,7 @@ function renderFolder(data) {
     for (const evidenceId of file.evidence_ids.slice(0, 20)) {
       validId(evidenceId);
       const button = document.createElement('button'); button.className = 'secondary'; button.textContent = 'Review evidence';
-      button.addEventListener('click', () => viewEvidence(evidenceId, {title:'Folder finding', meaning:'An inspector flagged this file. This is an allegation with supporting source references.', role:'Folder inspector'}));
+      button.addEventListener('click', () => viewEvidence(evidenceId, {title:file.path, resourceId:file.resource_id, meaning:'An inspector flagged this file. These excerpts refer to this file; the technical record may include findings for the combined folder.', role:'Folder inspector'}));
       content.append(button);
     }
     $('folder-files').append(item);

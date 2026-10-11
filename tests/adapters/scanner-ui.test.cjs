@@ -12,6 +12,8 @@ class Element {
   setAttribute(name, value) { this[name] = value; }
   querySelectorAll() { return []; }
   close() {}
+  showModal() {}
+  get childElementCount() { return this.children.length; }
 }
 function setup() {
   const elements = new Map();
@@ -19,8 +21,8 @@ function setup() {
   const context = vm.createContext({document, window:{addEventListener(){}}, clearTimeout, setTimeout, console, Uint8Array, TextDecoder, AbortController});
   let source = fs.readFileSync(path.join(__dirname, '../../web/app.js'), 'utf8');
   source = source.slice(0, source.lastIndexOf('try { await connectSession(); }'));
-  vm.runInContext(source + '\nstate.csrf="test"; this.ui={state,renderFolder,selectScanFiles,readDroppedFiles};', context);
-  return {ui:context.ui, el:id=>document.getElementById(id)};
+  vm.runInContext(source + '\nstate.csrf="test"; this.ui={state,renderFolder,selectScanFiles,readDroppedFiles,viewEvidence};', context);
+  return {context,ui:context.ui, el:id=>document.getElementById(id)};
 }
 function status(extra = {}) {
   return {folder_id:'folder_test', task_session_id:'task_test', scan_id:'scan_test', state:'INSPECTING', coverage_complete:false,
@@ -75,4 +77,18 @@ test('folder drop walks nested entries and all directory-reader batches', async 
 test('oversized folder drops are rejected rather than silently truncated', async () => {
   const {ui}=setup();
   await assert.rejects(ui.readDroppedFiles([directory('large',[Array.from({length:101},(_,i)=>file(i+'.txt'))])],[]),/LIMIT_EXCEEDED/);
+});
+
+test('file evidence shows only excerpts bound to the selected resource', async () => {
+  const {context,ui,el}=setup();
+  context.evidenceFixture={text_escaped:JSON.stringify({model_findings:[
+    {category:'OVERRIDE_ATTEMPT',source_references:[{resource_id:'res_other'},{resource_id:'res_attack'}]}]}),
+    source_excerpts:[{finding_index:0,reference_index:0,text:'Other file'},
+      {finding_index:0,reference_index:1,text:'Selected attack file'},
+      {finding_index:0,reference_index:9,text:'Unbound excerpt'}]};
+  vm.runInContext('api = async () => evidenceFixture;',context);
+  await ui.viewEvidence('evidence_test',{title:'attack.txt',resourceId:'res_attack'});
+  assert.equal(el('evidence-heading').textContent,'attack.txt');
+  assert.deepEqual(el('evidence-summary').children.map(x=>x.textContent),['Instruction override attempt','Selected attack file']);
+  assert.match(el('evidence-text').textContent,/res_other/);
 });
