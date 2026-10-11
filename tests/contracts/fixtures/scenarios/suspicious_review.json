@@ -42,6 +42,78 @@
     "deadline_at": "2026-10-10T12:01:00Z",
     "decision": "REVIEW",
     "decision_expires_at": "2026-10-10T13:00:00Z",
+    "decision_trace": {
+      "deciding_rule": "uncorroborated_suspicion",
+      "decision": "REVIEW",
+      "description": "An inspector flagged suspicious content without deterministic corroboration. The source is held for user review.",
+      "reason_codes": [
+        "SUSPICIOUS_UNCORROBORATED"
+      ],
+      "rules": [
+        {
+          "description": "The gateway's own tool collector recorded a forbidden operation during the sandboxed task run. A deterministic rule quarantines the source.",
+          "fired": false,
+          "outcome": "QUARANTINE",
+          "reason_codes": [],
+          "rule": "collector_forbidden_action"
+        },
+        {
+          "description": "Not all task-relevant content could be extracted. Uninspected content is never approved.",
+          "fired": false,
+          "outcome": "REVIEW",
+          "reason_codes": [],
+          "rule": "extraction_coverage"
+        },
+        {
+          "description": "The content names a registered vendor but gives bank details that differ from the vendor registry. A deterministic rule holds it for verification.",
+          "fired": false,
+          "outcome": "REVIEW",
+          "reason_codes": [],
+          "rule": "vendor_bank_details"
+        },
+        {
+          "description": "A required inspector failed, timed out or did not return. A failure never counts as a clean result.",
+          "fired": false,
+          "outcome": "REVIEW",
+          "reason_codes": [],
+          "rule": "inspection_completeness"
+        },
+        {
+          "description": "An inspector flagged suspicious content without deterministic corroboration. The source is held for user review.",
+          "fired": true,
+          "outcome": "REVIEW",
+          "reason_codes": [
+            "SUSPICIOUS_UNCORROBORATED"
+          ],
+          "rule": "uncorroborated_suspicion"
+        },
+        {
+          "description": "The task result could not be verified against its cited source, or the evidence records conflict.",
+          "fired": false,
+          "outcome": "REVIEW",
+          "reason_codes": [],
+          "rule": "answer_integrity"
+        },
+        {
+          "description": "Extraction and every required inspection completed with no violation or unresolved suspicion. The result is released under the task policy only.",
+          "fired": false,
+          "outcome": "ALLOW_UNDER_POLICY",
+          "reason_codes": [],
+          "rule": "all_checks_passed"
+        }
+      ]
+    },
+    "disagreement": {
+      "clean": 2,
+      "disagree": true,
+      "failed": 0,
+      "flagged": 1,
+      "verdicts": {
+        "BEHAVIOR_TESTER": "CLEAN",
+        "DATA_TOOL_INSPECTOR": "CLEAN",
+        "INSTRUCTION_INSPECTOR": "FLAGGED"
+      }
+    },
     "findings": [
       {
         "category": "OVERRIDE_ATTEMPT",
@@ -50,6 +122,77 @@
         ],
         "resource_id": "res_0003",
         "role": "INSTRUCTION_INSPECTOR"
+      }
+    ],
+    "inference_mode": "LIVE",
+    "inspectors": [
+      {
+        "evidence_ids": [
+          "ev_0015"
+        ],
+        "flags": [
+          "OVERRIDE_ATTEMPT"
+        ],
+        "role": "INSTRUCTION_INSPECTOR",
+        "status": "COMPLETE",
+        "verdict": "FLAGGED",
+        "views_assigned": [
+          {
+            "kind": "plain_text",
+            "resource_id": "res_0003",
+            "view_id": "visible"
+          }
+        ],
+        "views_examined": [
+          {
+            "kind": "plain_text",
+            "resource_id": "res_0003",
+            "view_id": "visible"
+          }
+        ]
+      },
+      {
+        "evidence_ids": [],
+        "flags": [],
+        "role": "DATA_TOOL_INSPECTOR",
+        "status": "COMPLETE",
+        "verdict": "CLEAN",
+        "views_assigned": [
+          {
+            "kind": "plain_text",
+            "resource_id": "res_0003",
+            "view_id": "visible"
+          }
+        ],
+        "views_examined": [
+          {
+            "kind": "plain_text",
+            "resource_id": "res_0003",
+            "view_id": "visible"
+          }
+        ]
+      },
+      {
+        "evidence_ids": [],
+        "flags": [],
+        "role": "BEHAVIOR_TESTER",
+        "status": "COMPLETE",
+        "tool_attempts": [],
+        "verdict": "CLEAN",
+        "views_assigned": [
+          {
+            "kind": "plain_text",
+            "resource_id": "res_0003",
+            "view_id": "visible"
+          }
+        ],
+        "views_examined": [
+          {
+            "kind": "plain_text",
+            "resource_id": "res_0003",
+            "view_id": "visible"
+          }
+        ]
       }
     ],
     "policy_id": "summarize_email",

@@ -32,7 +32,76 @@
     "deadline_at": "2026-10-10T12:01:00Z",
     "decision": null,
     "decision_expires_at": null,
+    "decision_trace": {
+      "deciding_rule": "terminated",
+      "decision": null,
+      "description": "The scan was canceled or rejected before release. Nothing is released.",
+      "reason_codes": [
+        "CANCELED_BY_USER"
+      ],
+      "rules": []
+    },
+    "disagreement": {
+      "clean": 0,
+      "disagree": false,
+      "failed": 0,
+      "flagged": 0,
+      "verdicts": {
+        "BEHAVIOR_TESTER": "STOPPED",
+        "DATA_TOOL_INSPECTOR": "STOPPED",
+        "INSTRUCTION_INSPECTOR": "STOPPED"
+      }
+    },
     "findings": [],
+    "inference_mode": "LIVE",
+    "inspectors": [
+      {
+        "evidence_ids": [],
+        "flags": [],
+        "role": "INSTRUCTION_INSPECTOR",
+        "status": "STOPPED",
+        "verdict": "STOPPED",
+        "views_assigned": [
+          {
+            "kind": "plain_text",
+            "resource_id": "res_0001",
+            "view_id": "visible"
+          }
+        ],
+        "views_examined": []
+      },
+      {
+        "evidence_ids": [],
+        "flags": [],
+        "role": "DATA_TOOL_INSPECTOR",
+        "status": "STOPPED",
+        "verdict": "STOPPED",
+        "views_assigned": [
+          {
+            "kind": "plain_text",
+            "resource_id": "res_0001",
+            "view_id": "visible"
+          }
+        ],
+        "views_examined": []
+      },
+      {
+        "evidence_ids": [],
+        "flags": [],
+        "role": "BEHAVIOR_TESTER",
+        "status": "STOPPED",
+        "tool_attempts": [],
+        "verdict": "STOPPED",
+        "views_assigned": [
+          {
+            "kind": "plain_text",
+            "resource_id": "res_0001",
+            "view_id": "visible"
+          }
+        ],
+        "views_examined": []
+      }
+    ],
     "policy_id": "summarize_email",
     "reason_codes": [
       "CANCELED_BY_USER"

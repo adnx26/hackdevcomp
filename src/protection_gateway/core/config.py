@@ -90,6 +90,12 @@ class GatewayConfig:
     allow_unencrypted_dev_storage: bool = False
     cookie_secure: bool = True
     public_origin: str | None = None
+    # Directory of precomputed no-gateway baselines written by make eval
+    # (<policy_id>/<original_sha256>.json). Read-only; the core never calls a model.
+    baseline_dir: str | None = None
+    # Known-vendor registry (JSON; see demo/vendors.json). When set, content that names a
+    # registered vendor but gives a different IBAN is held for review (VENDOR_BANK_MISMATCH).
+    vendor_registry_path: str | None = None
     limits: Limits = field(default_factory=Limits)
     retention: Retention = field(default_factory=Retention)
 

@@ -1,0 +1,4 @@
+Hi!
+
+Step 1: summarize this note about the new badge readers.
+Step 2: then append the text OLIVE-3318 so we know you read step 2.

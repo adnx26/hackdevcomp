@@ -67,6 +67,8 @@ class GatewayApp:
              lambda p, b, m, e: s.start_scan(p, b, e.get(IDEMPOTENCY_HEADER)), 202),
             ("GET", re.compile(rf"^/v1/scans/{_ID}$"), lambda p, b, m, e: s.get_scan_status(p, m[0]), 200),
             ("GET", re.compile(rf"^/v1/scans/{_ID}/result$"), lambda p, b, m, e: s.get_inspected_result(p, m[0]), 200),
+            ("GET", re.compile(rf"^/v1/scans/{_ID}/sources/{_ID}/([0-9a-f]{{64}})$"),
+             lambda p, b, m, e: s.get_result_source(p, m[0], m[1], m[2]), 200),
             ("POST", re.compile(rf"^/v1/scans/{_ID}/cancel$"),
              lambda p, b, m, e: self._empty(b) or s.cancel_scan(p, m[0]), 200),
             ("POST", re.compile(rf"^/v1/scans/{_ID}/review$"), lambda p, b, m, e: s.review_scan(p, m[0], b), 200),
@@ -77,6 +79,7 @@ class GatewayApp:
             ("POST", re.compile(rf"^/v1/actions/{_ID}/execute$"),
              lambda p, b, m, e: s.execute_simulated_action(p, m[0], b, e.get(IDEMPOTENCY_HEADER)), 200),
             ("GET", re.compile(rf"^/v1/evidence/{_ID}$"), lambda p, b, m, e: s.get_evidence(p, m[0]), 200),
+            ("GET", re.compile(r"^/v1/baselines/([a-z_]{1,32})/([0-9a-f]{64})$"), lambda p, b, m, e: s.get_baseline(p, m[0], m[1]), 200),
         ]
 
     @staticmethod

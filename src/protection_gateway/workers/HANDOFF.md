@@ -4,7 +4,7 @@ Source: `docs/teammate-c-inspection-agents.md`, together with system-design sect
 
 ## Entry points and versions
 
-`protection_gateway.workers.extract(assignment, restricted_io)` and `inspect(assignment, restricted_io, model_client, simulated_tools)` are synchronous JSON-mapping boundaries. Extractor: `c-extractor-1`; inspector build: `c-workers-2`; prompts: `c-prompts-4`. Inspector role keys are `instruction`, `data`, `behavior`; the gateway's `CoreRuntimeBridge` maps these to the canonical roster. There is no production fallback when a callback is unavailable.
+`protection_gateway.workers.extract(assignment, restricted_io)` and `inspect(assignment, restricted_io, model_client, simulated_tools)` are synchronous JSON-mapping boundaries. Extractor: `c-extractor-1`; inspector build: `c-workers-3`; prompts: `c-prompts-4`. Inspector role keys are `instruction`, `data`, `behavior`; the gateway's `CoreRuntimeBridge` maps these to the canonical roster. There is no production fallback when a callback is unavailable.
 
 Final model reports are validated before any findings or output are committed. Malformed structure, invalid role categories, invalid references, missing views, and ambiguous quotes permit at most two fresh-report retries within the original call budget and deadline. The worker sends only fixed validation codes as feedback, preserves the full assignment and document set, and does not replay tools during report repair. Repeated invalid replies remain errors; source-value mismatches remain incomplete. Validated forbidden-action collector evidence survives a failed or repaired final report.
 

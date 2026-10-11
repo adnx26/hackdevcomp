@@ -178,6 +178,8 @@ def attach_core(gateway, config):
                                model_configuration=config.model.binding() if config.model else {},
                                allow_unencrypted_dev_storage=True, cookie_secure=bool(config.tls_cert),
                                public_origin=config.allowed_origins[0],
+                               baseline_dir=str(config.baseline_dir),
+                               vendor_registry_path=str(config.vendor_registry) if config.vendor_registry else None,
                                limits=Limits(scan_deadline_seconds=300, worker_lease_seconds=150))
     service = GatewayService(core_config, runtime=bridge)
     bridge.service = service

@@ -115,14 +115,23 @@ class Runtime:
             if config.model is None:
                 raise RuntimeUnavailable("MODEL_CONFIGURATION_MISSING")
             transport = self._model_transport
-            if transport is None:
+
+            def live_transport():
+                if transport is not None:
+                    return transport
                 if config.model_api_key_file is None and not config.model_api_key:
                     raise RuntimeUnavailable("MODEL_PROVIDER_CREDENTIAL_MISSING")
                 from .providers import AnthropicTransport, KimiTransport
 
-                transport = (KimiTransport(config.model, config.model_api_key, config.model_api_key_file)
-                             if config.model.provider == "kimi" else AnthropicTransport(config.model, config.model_api_key_file))
-            self.broker = ModelBroker(config.model, transport, self._core)
+                return (KimiTransport(config.model, config.model_api_key, config.model_api_key_file)
+                        if config.model.provider == "kimi" else AnthropicTransport(config.model, config.model_api_key_file))
+
+            from .replay import select_transport
+
+            if (config.model_replay == "replay") != (config.model.inference == "replay"):
+                raise RuntimeUnavailable("REPLAY_CONFIGURATION_MISMATCH")
+            self.broker = ModelBroker(config.model, select_transport(
+                config.model_replay, dev_mode=config.dev_mode, directory=config.replay_dir, live_factory=live_transport), self._core)
             self._reasons.pop("model_broker", None)
         except RuntimeUnavailable as error:
             self._reasons["model_broker"] = error.reason_code

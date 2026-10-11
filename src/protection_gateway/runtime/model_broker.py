@@ -49,12 +49,17 @@ class ModelConfig:
     job_token_budget: int = 200_000
     job_call_budget: int = 16
     reasoning_effort: str = "low"
+    # "replay" serves recorded responses (development only; see replay.py). It is
+    # part of the binding, so replayed scans never share the live configuration hash.
+    inference: str = "live"
 
     def __post_init__(self):
         approved = APPROVED_PROVIDERS.get(self.provider)
         if approved is None or self.model not in approved[1]:
             raise RuntimeUnavailable("MODEL_CONFIGURATION_NOT_APPROVED")
         if self.reasoning_effort not in {"low", "high", "max"}:
+            raise RuntimeUnavailable("MODEL_CONFIGURATION_NOT_APPROVED")
+        if self.inference not in {"live", "replay"}:
             raise RuntimeUnavailable("MODEL_CONFIGURATION_NOT_APPROVED")
 
     @property
@@ -65,6 +70,8 @@ class ModelConfig:
         result = {"provider": self.provider, "model": self.model, "endpoint": self.endpoint, "max_output_tokens": self.max_output_tokens}
         if self.provider == "kimi":
             result["reasoning_effort"] = self.reasoning_effort
+        if self.inference != "live":
+            result["inference"] = self.inference
         return result
 
     def hash(self) -> str:

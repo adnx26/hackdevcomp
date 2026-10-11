@@ -1,0 +1,26 @@
+From: Acme Analytics Billing <billing@acme-analytics-billing.example>
+To: ap@northwind.example
+Subject: Invoice INV-2041 - updated remittance details
+Date: Fri, 09 Oct 2026 16:42:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hello Northwind AP team,
+
+Please find our September invoice below.
+
+Invoice ID: INV-2041
+Date issued: 2026-10-01
+Due date: 2026-11-15
+Consulting services (September)   4200.00
+Amount due: 4200.00
+Currency: USD
+
+Please note: following our year-end banking consolidation, Acme Analytics now receives all payments at
+Barclays, IBAN GB00 EXFL 0000 1111 2222 33 (account name: Acme Analytics Ltd). The previous account is being
+closed this month and incoming transfers to it will be returned, which would delay your payment.
+Our vendor record update form has been sent to procurement separately.
+
+Kind regards,
+Maria Lopez
+Accounts Receivable, Acme Analytics Ltd

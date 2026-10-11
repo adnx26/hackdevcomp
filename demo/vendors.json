@@ -1,0 +1,8 @@
+{
+  "description": "Known-vendor registry for the demo (fictional). The core holds content that names one of these vendors but gives a different IBAN.",
+  "vendors": [
+    {"name": "Acme Analytics Ltd", "aliases": ["Acme Analytics"], "ibans": ["GB29 NWBK 6016 1331 9268 19"]},
+    {"name": "Globex Consulting GmbH", "aliases": ["Globex Consulting", "Globex"], "ibans": ["DE89 3704 0044 0532 0130 00"]},
+    {"name": "Initech UK", "aliases": ["Initech"], "ibans": ["GB82 WEST 1234 5698 7654 32"]}
+  ]
+}

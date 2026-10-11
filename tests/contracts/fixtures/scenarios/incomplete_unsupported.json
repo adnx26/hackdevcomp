@@ -38,7 +38,110 @@
     "deadline_at": "2026-10-10T12:01:00Z",
     "decision": "REVIEW",
     "decision_expires_at": "2026-10-10T13:00:00Z",
+    "decision_trace": {
+      "deciding_rule": "extraction_coverage",
+      "decision": "REVIEW",
+      "description": "Not all task-relevant content could be extracted. Uninspected content is never approved.",
+      "reason_codes": [
+        "UNSUPPORTED_CONTENT"
+      ],
+      "rules": [
+        {
+          "description": "The gateway's own tool collector recorded a forbidden operation during the sandboxed task run. A deterministic rule quarantines the source.",
+          "fired": false,
+          "outcome": "QUARANTINE",
+          "reason_codes": [],
+          "rule": "collector_forbidden_action"
+        },
+        {
+          "description": "Not all task-relevant content could be extracted. Uninspected content is never approved.",
+          "fired": true,
+          "outcome": "REVIEW",
+          "reason_codes": [
+            "UNSUPPORTED_CONTENT"
+          ],
+          "rule": "extraction_coverage"
+        },
+        {
+          "description": "The content names a registered vendor but gives bank details that differ from the vendor registry. A deterministic rule holds it for verification.",
+          "fired": false,
+          "outcome": "REVIEW",
+          "reason_codes": [],
+          "rule": "vendor_bank_details"
+        },
+        {
+          "description": "A required inspector failed, timed out or did not return. A failure never counts as a clean result.",
+          "fired": false,
+          "outcome": "REVIEW",
+          "reason_codes": [],
+          "rule": "inspection_completeness"
+        },
+        {
+          "description": "An inspector flagged suspicious content without deterministic corroboration. The source is held for user review.",
+          "fired": false,
+          "outcome": "REVIEW",
+          "reason_codes": [],
+          "rule": "uncorroborated_suspicion"
+        },
+        {
+          "description": "The task result could not be verified against its cited source, or the evidence records conflict.",
+          "fired": false,
+          "outcome": "REVIEW",
+          "reason_codes": [],
+          "rule": "answer_integrity"
+        },
+        {
+          "description": "Extraction and every required inspection completed with no violation or unresolved suspicion. The result is released under the task policy only.",
+          "fired": false,
+          "outcome": "ALLOW_UNDER_POLICY",
+          "reason_codes": [],
+          "rule": "all_checks_passed"
+        }
+      ]
+    },
+    "disagreement": {
+      "clean": 0,
+      "disagree": false,
+      "failed": 3,
+      "flagged": 0,
+      "verdicts": {
+        "BEHAVIOR_TESTER": "FAILED",
+        "DATA_TOOL_INSPECTOR": "FAILED",
+        "INSTRUCTION_INSPECTOR": "FAILED"
+      }
+    },
     "findings": [],
+    "inference_mode": "LIVE",
+    "inspectors": [
+      {
+        "evidence_ids": [],
+        "flags": [],
+        "role": "INSTRUCTION_INSPECTOR",
+        "status": "MISSING",
+        "verdict": "FAILED",
+        "views_assigned": [],
+        "views_examined": []
+      },
+      {
+        "evidence_ids": [],
+        "flags": [],
+        "role": "DATA_TOOL_INSPECTOR",
+        "status": "MISSING",
+        "verdict": "FAILED",
+        "views_assigned": [],
+        "views_examined": []
+      },
+      {
+        "evidence_ids": [],
+        "flags": [],
+        "role": "BEHAVIOR_TESTER",
+        "status": "MISSING",
+        "tool_attempts": [],
+        "verdict": "FAILED",
+        "views_assigned": [],
+        "views_examined": []
+      }
+    ],
     "policy_id": "extract_invoice",
     "reason_codes": [
       "UNSUPPORTED_CONTENT"

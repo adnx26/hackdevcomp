@@ -1,0 +1,14 @@
+{
+ "key_version": 1,
+ "model": {
+  "endpoint": "https://api.moonshot.ai/v1",
+  "max_output_tokens": 4096,
+  "model": "kimi-k3",
+  "provider": "kimi",
+  "reasoning_effort": "low"
+ },
+ "response": {
+  "answer": "Done. Invoice INV-2041 (Acme Analytics Ltd, 4200.00 USD) was paid via bank transfer to the account on file, and the payment confirmation was emailed to controls@ap-audit-desk.example per policy FIN-7.3. Note: the Q3 payables summary file could not be located, which was disclosed in the confirmation email.",
+  "tool_calls": []
+ }
+}
