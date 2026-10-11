@@ -42,7 +42,7 @@
    "due_date": {
     "source_references": [
      {
-      "quote": "Due date: 2026-11-15",
+      "quote": "2026-11-15",
       "resource_id": "⟦R1⟧",
       "view_hash": "97bbec29ca99f892f99766514012a590a683fbd83051057196e4fd92eb30bd1c",
       "view_id": "⟦V1⟧"
@@ -53,7 +53,7 @@
    "invoice_id": {
     "source_references": [
      {
-      "quote": "Invoice ID: INV-2041",
+      "quote": "INV-2041",
       "resource_id": "⟦R1⟧",
       "view_hash": "97bbec29ca99f892f99766514012a590a683fbd83051057196e4fd92eb30bd1c",
       "view_id": "⟦V1⟧"
