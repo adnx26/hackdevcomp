@@ -7,7 +7,7 @@ PORT ?= 8766
 REPLAY ?=
 PYTHON_HELP := Install one with uv (uv python install 3.12) or pyenv (pyenv install 3.12), see README, then run: make setup PYTHON=/path/to/python3.12
 
-.PHONY: setup test test-isolation test-e2e smoke check doctor run lock
+.PHONY: setup test test-isolation test-e2e smoke check doctor eval run lock
 
 setup:
 	@if [ -z "$(PYTHON)" ]; then echo "error: no Python 3.11 or later found on PATH. $(PYTHON_HELP)" >&2; exit 1; fi
@@ -42,6 +42,11 @@ check:
 # Add ARGS=--offline to skip the one tiny live provider call.
 doctor:
 	PG_MODEL_REPLAY=$(REPLAY) $(PY) scripts/doctor.py --port $(PORT) $(ARGS)
+
+# Naive agent vs. gateway conditions on eval/corpus (live Kimi, replies cached in var/eval-cache).
+# REPLAY=replay re-scores offline from that cache. Writes eval/results.{json,md} and eval/chart.svg.
+eval:
+	$(PY) eval/run_eval.py --replay "$(REPLAY)" $(ARGS)
 
 run:
 	PG_PORT=$(PORT) PG_MODEL_REPLAY=$(REPLAY) $(PY) -m protection_gateway.bootstrap --dev

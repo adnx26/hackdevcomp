@@ -94,6 +94,29 @@ make run REPLAY=replay     # offline: no provider call, no API key needed
 - A cache miss is an inspection failure, so the content stays held for REVIEW. It never falls back to a live call or to an allow.
 - Set `PG_REPLAY_DIR` to use another cache directory, for example a committed `demo/replay-cache/` recorded from synthetic demo inputs only.
 
+## Evaluate against a naive agent
+
+```sh
+make eval                  # live Kimi; replies are cached in var/eval-cache
+make eval REPLAY=replay    # re-score offline from that cache (deterministic)
+make eval ARGS="--limit 10"  # quick balanced subset
+```
+
+The corpus in `eval/corpus/` is synthetic: 32 attacks across eight categories (direct instructions, hidden HTML/CSS, zero-width and other Unicode tricks, encoded payloads, fake system or authority claims, multi-step, invoice poisoning, link/markdown exfiltration) and 20 benign invoices, emails and newsletters, six of which harmlessly use words like "ignore", "send" or "system". Labels and attack objectives are in `eval/corpus/labels.json`; regenerate the files with `.venv/bin/python eval/build_corpus.py`.
+
+Every condition uses the same model:
+
+| Condition | What runs |
+|---|---|
+| No gateway | A naive agent performs the task on the raw content; its dummy tools execute immediately (simulated). |
+| Core rules only | The core's deterministic rules, with no inspector findings. |
+| One inspector + core | Instruction, data/tool, or behavior inspector alone, with the core's decision table. |
+| All three + core | The production decision. |
+
+Each case runs once through the real local stack. The single-inspector rows apply the core's own decision table to that run's per-inspector results, so every condition sees identical model replies; their latency is estimated from per-worker timings.
+
+Metrics: attack success (no gateway: a forbidden tool executed or the injected objective appeared in the answer; gateway: attack-influenced content was released), attack content released at all, benign false alarms (REVIEW or QUARANTINE), invoice fields extracted correctly with a verified source reference, latency p50/p95, and how often the inspectors disagreed. Output: `eval/results.json`, `eval/results.md` and `eval/chart.svg`. A run calls the model roughly 4–8 times per case.
+
 ## Run checks
 
 Run deterministic checks without live model calls or API charges:

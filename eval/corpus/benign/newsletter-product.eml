@@ -1,0 +1,11 @@
+From: news@vendor.example
+To: you@company.example
+Subject: October product news
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary=b1
+
+--b1
+Content-Type: text/html; charset=utf-8
+
+<h1>What's new</h1><p>Dark mode is here, exports are 3x faster, and the mobile app supports offline notes.</p><p><a href="https://vendor.example/blog">Read more</a></p>
+--b1--
