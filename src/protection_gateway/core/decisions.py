@@ -54,6 +54,8 @@ class DecisionInputs:
     exhausted_roles: frozenset[str] = frozenset()
     deadline_passed: bool = False
     verified_forbidden_action: bool = False
+    # Deterministic: a registered vendor's bank details differ from the registry.
+    vendor_bank_mismatch: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,9 @@ def decide(inputs: DecisionInputs) -> DecisionOutcome:
         if result.contradicts_telemetry:
             reasons.append(ReasonCode.CONTRADICTORY_EVIDENCE.value)
 
+    if inputs.vendor_bank_mismatch:
+        reasons.append(ReasonCode.VENDOR_BANK_MISMATCH.value)
+
     behavior = inputs.results.get(WorkerRole.BEHAVIOR_TESTER.value)
     if behavior is not None and behavior.status == InspectionStatus.COMPLETE and not behavior.has_task_output:
         reasons.append(ReasonCode.TASK_OUTPUT_MISSING.value)
@@ -125,3 +130,63 @@ def review_exception_eligible(decision: str | None, reason_codes: list[str] | tu
         and bool(reason_codes)
         and set(reason_codes) <= {r.value for r in REVIEW_EXCEPTION_ELIGIBLE_REASONS}
     )
+
+
+# The decision table in evaluation order, for the public decision trace. Each
+# row names the reason codes that make it fire. Descriptions are fixed text;
+# no model output or source text ever appears in a trace.
+DECISION_RULES = (
+    ("collector_forbidden_action", Decision.QUARANTINE.value, frozenset({ReasonCode.VERIFIED_FORBIDDEN_ACTION.value}),
+     "The gateway's own tool collector recorded a forbidden operation during the sandboxed task run. A deterministic rule quarantines the source."),
+    ("extraction_coverage", Decision.REVIEW.value,
+     frozenset({ReasonCode.EXTRACTION_INCOMPLETE.value, ReasonCode.EXTRACTION_ERROR.value, ReasonCode.UNSUPPORTED_CONTENT.value, ReasonCode.LIMIT_EXCEEDED.value}),
+     "Not all task-relevant content could be extracted. Uninspected content is never approved."),
+    ("vendor_bank_details", Decision.REVIEW.value, frozenset({ReasonCode.VENDOR_BANK_MISMATCH.value}),
+     "The content names a registered vendor but gives bank details that differ from the vendor registry. A deterministic rule holds it for verification."),
+    ("inspection_completeness", Decision.REVIEW.value,
+     frozenset({ReasonCode.INSPECTION_INCOMPLETE.value, ReasonCode.INSPECTION_ERROR.value, ReasonCode.WORKER_MISSING.value, ReasonCode.TIMEOUT.value}),
+     "A required inspector failed, timed out or did not return. A failure never counts as a clean result."),
+    ("uncorroborated_suspicion", Decision.REVIEW.value, frozenset({ReasonCode.SUSPICIOUS_UNCORROBORATED.value}),
+     "An inspector flagged suspicious content without deterministic corroboration. The source is held for user review."),
+    ("answer_integrity", Decision.REVIEW.value,
+     frozenset({ReasonCode.ANSWER_MISMATCH.value, ReasonCode.TASK_OUTPUT_MISSING.value, ReasonCode.CONTRADICTORY_EVIDENCE.value}),
+     "The task result could not be verified against its cited source, or the evidence records conflict."),
+    ("all_checks_passed", Decision.ALLOW_UNDER_POLICY.value, frozenset(),
+     "Extraction and every required inspection completed with no violation or unresolved suspicion. The result is released under the task policy only."),
+)
+
+TERMINAL_RULE_TEXT = {
+    "FAILED": "A required gateway service failed, so the scan ended without a decision. Nothing is released.",
+    "CANCELED": "The scan was canceled or rejected before release. Nothing is released.",
+}
+
+
+def decision_trace(state: str, decision: str | None, reason_codes) -> dict | None:
+    """Which rule of the decision table produced this outcome, and which did not."""
+    reasons = set(reason_codes or ())
+    if state in TERMINAL_RULE_TEXT:
+        return {"deciding_rule": "terminated", "decision": None, "description": TERMINAL_RULE_TEXT[state],
+                "reason_codes": sorted(reasons), "rules": []}
+    if decision is None:
+        return None
+    rules, deciding = [], None
+    for rule_id, outcome, codes, description in DECISION_RULES:
+        matched = sorted(reasons & codes)
+        fired = bool(matched) if codes else decision == Decision.ALLOW_UNDER_POLICY.value
+        if fired and deciding is None and outcome == decision:
+            deciding = rule_id
+        rules.append({"rule": rule_id, "outcome": outcome, "fired": fired, "reason_codes": matched, "description": description})
+    return {"deciding_rule": deciding, "decision": decision,
+            "description": next((r["description"] for r in rules if r["rule"] == deciding), ""),
+            "reason_codes": sorted(reasons), "rules": rules}
+
+
+def disagreement_summary(verdicts: dict[str, str]) -> dict:
+    """Disagreement among inspectors that reached a verdict: FLAGGED vs CLEAN vs FAILED.
+
+    PENDING (still running) and STOPPED (canceled because the scan ended first)
+    are not verdicts and are not counted.
+    """
+    finished = {role: v for role, v in verdicts.items() if v not in ("PENDING", "STOPPED")}
+    counts = {key: sum(v == key for v in finished.values()) for key in ("FLAGGED", "CLEAN", "FAILED")}
+    return {"disagree": len(set(finished.values())) > 1, "verdicts": dict(verdicts), **{k.lower(): n for k, n in counts.items()}}

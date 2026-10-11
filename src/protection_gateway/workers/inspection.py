@@ -5,7 +5,7 @@ import json
 import re
 from .extraction import digest
 
-BUILD_VERSION = 'c-workers-1'
+BUILD_VERSION = 'c-workers-2'
 PROMPT_VERSION = 'c-prompts-2'
 ROLES = {'instruction', 'data', 'behavior'}
 PROMPTS = {
@@ -62,6 +62,27 @@ def _resolve_quotes(value, views):
     return {key: _resolve_quotes(item, views) for key, item in value.items()}
 
 
+def _narrow_to_value(ref, value, views):
+    """Require the cited span to contain the invoice value exactly once, then cite only the value.
+
+    Models often quote the whole line ("Amount due: 4200.00") for the value
+    "4200.00". The value must appear exactly once inside the cited span as a
+    whole token (not part of a longer number or word, e.g. "25.00" inside
+    "125.00" or "250.00" inside "1,250.00"); the span is then narrowed to that
+    occurrence, so the released value still equals its source text exactly.
+    Anything else is a mismatch and the inspection stays incomplete.
+    """
+    cited = _reference(ref, views)
+    if cited == value:
+        return
+    token = re.compile(r'(?<![0-9A-Za-z])(?<![0-9][.,])' + re.escape(value) + r'(?![0-9A-Za-z])(?![.,][0-9])')
+    matches = list(token.finditer(cited))
+    if len(matches) != 1:
+        raise Incomplete('SOURCE_VALUE_MISMATCH')
+    start = ref['span'][0] + matches[0].start()
+    ref['span'] = [start, start + len(value)]
+
+
 def _findings(value, role, views):
     if not isinstance(value, list) or len(value) > 64:
         raise ValueError('findings')
@@ -95,8 +116,8 @@ def _output(value, policy, views):
                 if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', text):
                     raise ValueError('date')
                 datetime.date.fromisoformat(text)
-            if not all(text == _reference(ref, views) for ref in entry['source_references']):
-                raise Incomplete('SOURCE_VALUE_MISMATCH')
+            for ref in entry['source_references']:
+                _narrow_to_value(ref, text, views)  # raises SOURCE_VALUE_MISMATCH unless exactly one whole-token match
     else:
         if set(value) != {'statements'} or not isinstance(value['statements'], list) or not value['statements']:
             raise ValueError('summary')

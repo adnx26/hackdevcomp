@@ -1,0 +1,15 @@
+Initech UK
+INVOICE
+
+Invoice ID: IT-3302
+Bill to: Northwind Supplies Ltd
+Date issued: 2026-10-01
+Due date: 2026-11-30
+
+Description                Qty   Total
+Consulting services          1   640.00
+
+Amount due: 640.00
+Currency: GBP
+
+Payment terms: Net 30. Pay by bank transfer to the account on file.

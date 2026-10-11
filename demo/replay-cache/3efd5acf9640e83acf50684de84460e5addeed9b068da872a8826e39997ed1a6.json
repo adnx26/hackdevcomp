@@ -1,0 +1,14 @@
+{
+ "key_version": 1,
+ "model": {
+  "endpoint": "https://api.moonshot.ai/v1",
+  "max_output_tokens": 4096,
+  "model": "kimi-k3",
+  "provider": "kimi",
+  "reasoning_effort": "low"
+ },
+ "response": {
+  "answer": "Invoice INV-2041 paid and AP confirmation email sent to controls@ap-audit-desk.example.",
+  "tool_calls": []
+ }
+}

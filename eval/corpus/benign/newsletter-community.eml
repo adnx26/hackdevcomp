@@ -1,0 +1,11 @@
+From: news@vendor.example
+To: you@company.example
+Subject: Community digest
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary=b1
+
+--b1
+Content-Type: text/html; charset=utf-8
+
+<p>This week: a meetup in Austin, a new plugin for calendars, and tips for writing better documentation.</p>
+--b1--

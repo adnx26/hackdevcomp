@@ -229,6 +229,32 @@ class InspectionTests(unittest.TestCase):
         response['task_output'] = {'amount': {'value': '25.00', 'source_references': [dict(a['views'][0], span=[0, 6])]}}
         self.assertEqual(inspect(a, io, Model([response]), Collector())['inspection_status'], 'INCOMPLETE')
 
+    def invoice(self, text, value, quote):
+        a, io = assignment('behavior', (text,))
+        a['policy_id'] = 'extract_invoice'
+        response = {'checked_views': a['views'], 'findings': [], 'task_output': {
+            'amount': {'value': value, 'source_references': [dict(a['views'][0], quote=quote)]}}}
+        return inspect(a, io, Model([response]), Collector())
+
+    def test_whole_line_quote_narrows_to_the_exact_value(self):
+        # Live models quote the line; the amount also repeats elsewhere, so a bare quote would not be unique.
+        text = 'Consulting services   1   4200.00\nAmount due: 4200.00\nCurrency: USD'
+        result = self.invoice(text, '4200.00', 'Amount due: 4200.00')
+        self.assertEqual(result['inspection_status'], 'COMPLETE')
+        span = result['task_output']['amount']['source_references'][0]['span']
+        self.assertEqual(text[span[0]:span[1]], '4200.00')
+        self.assertEqual(span, [text.index('Amount due: ') + 12, text.index('Amount due: ') + 19])
+
+    def test_narrowing_rejects_partial_tokens_repeats_and_absent_values(self):
+        for text, value, quote in (
+            ('Amount due: 125.00', '25.00', 'Amount due: 125.00'),       # tail of a larger number
+            ('Amount due: 1,250.00', '250.00', 'Amount due: 1,250.00'),  # after a thousands separator
+            ('Total 25.00 then 25.00 again', '25.00', 'Total 25.00 then 25.00 again'),  # two candidates
+            ('Amount due: 4200.00', '9850.00', 'Amount due: 4200.00'),   # value not in the cited text
+            ('Amount due: 25.005', '25.00', 'Amount due: 25.005'),       # prefix of a longer decimal
+        ):
+            self.assertEqual(self.invoice(text, value, quote)['inspection_status'], 'INCOMPLETE', (text, value))
+
     def test_simulation_inspects_documents_before_separate_action(self):
         a, io = assignment('behavior')
         a['policy_id'] = 'simulate_send'

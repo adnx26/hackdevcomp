@@ -35,12 +35,104 @@ const reasonInfo = {
   RESOURCE_DELETED: 'A source was removed before the inspection completed.',
   CONTRADICTORY_EVIDENCE: 'The inspection produced conflicting records, so the content remains held.',
   EMERGENCY_STOP: 'The gateway emergency stop prevented this inspection from completing.',
+  VENDOR_BANK_MISMATCH: 'The content gives bank details for a known vendor that differ from the vendor registry. Verify them with the vendor through a known channel.',
 };
 const roleInfo = {
   INSTRUCTION_INSPECTOR: 'Instruction check',
   DATA_TOOL_INSPECTOR: 'Data and action check',
   BEHAVIOR_TESTER: 'Task result check',
 };
+const verdictInfo = {
+  FLAGGED: 'Flagged', CLEAN: 'Found nothing', FAILED: 'Failed or missing',
+  STOPPED: 'Stopped early (scan ended)', PENDING: 'Running',
+};
+const ruleInfo = {
+  collector_forbidden_action: 'Forbidden tool attempt recorded by the gateway collector',
+  extraction_coverage: 'All task-relevant content extracted',
+  vendor_bank_details: 'Bank details match the vendor registry',
+  inspection_completeness: 'Every required inspection completed',
+  uncorroborated_suspicion: 'No unresolved suspicion',
+  answer_integrity: 'Result matches its cited source',
+  all_checks_passed: 'All checks passed',
+  terminated: 'Scan ended before a decision',
+};
+const decisionNames = {ALLOW_UNDER_POLICY: 'Allow under policy', REVIEW: 'Review', QUARANTINE: 'Quarantine'};
+
+function element(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = String(text);
+  if (className) node.className = className;
+  return node;
+}
+
+function renderAgents(data) {
+  const inspectors = Array.isArray(data.inspectors) ? data.inspectors.slice(0, 8) : [];
+  $('agents-panel').hidden = inspectors.length === 0;
+  $('inspector-cards').replaceChildren();
+  $('decision-trace').replaceChildren();
+  if (!inspectors.length) return;
+  const verdicts = inspectors.map(i => safeCode(i.verdict));
+  const reached = verdicts.filter(v => !['PENDING', 'STOPPED'].includes(v));
+  const disagree = data.disagreement?.disagree === true;
+  const banner = $('disagreement-banner');
+  banner.dataset.disagree = String(disagree);
+  if (disagree) {
+    const parts = inspectors.filter(i => !['PENDING', 'STOPPED'].includes(i.verdict))
+      .map(i => `${roleInfo[i.role] || readableName(i.role)}: ${(verdictInfo[i.verdict] || readableName(i.verdict)).toLowerCase()}`);
+    banner.textContent = `Inspectors disagree — ${parts.join('; ')}. The gateway does not take a vote; the rule marked below decided.`;
+  } else {
+    banner.textContent = reached.length ? 'Inspectors agree.' : 'Waiting for inspector results.';
+  }
+  const majority = reached.length ? reached.sort((a, b) => reached.filter(v => v === b).length - reached.filter(v => v === a).length)[0] : null;
+  for (const inspector of inspectors) {
+    const verdict = safeCode(inspector.verdict);
+    const card = element('article', undefined, 'inspector-card');
+    card.dataset.verdict = verdict;
+    if (disagree && majority && verdict !== majority && !['PENDING', 'STOPPED'].includes(verdict)) card.dataset.outlier = 'true';
+    card.append(element('h4', roleInfo[inspector.role] || readableName(inspector.role)),
+      element('p', verdictInfo[verdict] || readableName(verdict), 'verdict'),
+      element('p', `Status: ${readableName(safeCode(inspector.status))}`, 'hint'));
+    const flags = (inspector.flags || []).slice(0, 16).map(safeCode);
+    const flagList = element('ul', undefined, 'flag-list');
+    for (const flag of flags) flagList.append(element('li', (findingInfo[flag] || [readableName(flag)])[0]));
+    if (!flags.length) flagList.append(element('li', 'No flags', 'hint'));
+    card.append(element('p', 'Flags', 'label'), flagList);
+    const examined = (inspector.views_examined || []).slice(0, 16);
+    const assigned = (inspector.views_assigned || []).slice(0, 16);
+    const views = examined.length ? examined : assigned;
+    card.append(element('p', examined.length ? 'Views examined' : 'Views assigned (not confirmed)', 'label'),
+      element('p', views.map(v => readableName(safeCode(String(v.kind || 'view').toUpperCase()))).join(', ') || 'None', 'hint'));
+    const attempts = (inspector.tool_attempts || []).slice(0, 16);
+    if (attempts.length) {
+      const list = element('ul', undefined, 'flag-list');
+      for (const attempt of attempts) {
+        const item = element('li', `${readableName(safeCode(String(attempt.operation || '').toUpperCase()))}: ${safeCode(attempt.policy_check) === 'FORBIDDEN' ? 'blocked (forbidden)' : 'allowed (dummy)'}`);
+        if (safeCode(attempt.policy_check) === 'FORBIDDEN') item.className = 'forbidden';
+        list.append(item);
+      }
+      card.append(element('p', 'Sandbox tool attempts (gateway collector)', 'label'), list);
+    }
+    $('inspector-cards').append(card);
+  }
+  const trace = data.decision_trace;
+  if (!trace || typeof trace !== 'object') {
+    $('decision-trace').append(element('li', 'No decision yet. The core decides only after every required check finishes or the deadline passes.', 'hint'));
+    return;
+  }
+  const deciding = typeof trace.deciding_rule === 'string' ? trace.deciding_rule : '';
+  const rules = Array.isArray(trace.rules) && trace.rules.length ? trace.rules.slice(0, 12) : [{rule: deciding, fired: true, description: trace.description}];
+  for (const rule of rules) {
+    const id = typeof rule.rule === 'string' ? rule.rule : '';
+    const item = element('li');
+    item.dataset.fired = String(rule.fired === true);
+    if (id === deciding) item.dataset.deciding = 'true';
+    const outcome = decisionNames[rule.outcome] ? ` → ${decisionNames[rule.outcome]}` : '';
+    item.append(element('strong', `${rule.fired === true ? 'Fired' : 'Not fired'} · ${ruleInfo[id] || readableName(id)}${outcome}`));
+    if (id === deciding) item.append(element('span', 'Decided by this rule', 'deciding-tag'));
+    item.append(element('p', String(rule.description || '').slice(0, 400), 'hint'));
+    $('decision-trace').append(item);
+  }
+}
 function readableName(value) {
   return String(value || '').toLowerCase().split('_').map(part => part ? part[0].toUpperCase() + part.slice(1) : '').join(' ');
 }
@@ -136,12 +228,17 @@ function canReadResult(data = state.status) {
 }
 function clearReleased() {
   $('result-panel').hidden = true;
+  $('result-replay-banner').hidden = true;
+  $('value-list').replaceChildren(); $('source-view').replaceChildren(); $('source-view').hidden = $('source-caption').hidden = true;
+  sourceCache.clear();
   $('result').textContent = '';
   $('chat-result').hidden = true;
   $('chat-result').textContent = '';
   discardAction();
 }
 function invalidate() {
+  $('baseline-panel').hidden = true; $('baseline-body').replaceChildren(); $('compare-button').disabled = true;
+  $('agents-panel').hidden = true;
   ++state.generation;
   clearTimeout(state.timer);
   clearTimeout(state.expiryTimer);
@@ -176,6 +273,10 @@ function renderStatus(data) {
     data.evidence_ids = [...new Set([...(data.findings || []).flatMap(f => f.evidence_ids), ...(data.collector_evidence || []).map(e => e.evidence_id)])];
   }
   state.status = data;
+  renderAgents(data);
+  // Replayed runs are always labeled; anything other than LIVE is shown as such.
+  const inference = ['LIVE', 'REPLAY'].includes(data.inference_mode) ? data.inference_mode : 'UNKNOWN';
+  $('replay-banner').hidden = inference !== 'REPLAY';
   const decisionCopy = {
     ALLOW_UNDER_POLICY: ['Checks complete · permitted result', 'The required checks completed. You can view the result under the selected task policy.'],
     REVIEW: ['Held for review', 'The gateway found an unresolved issue or could not complete coverage. The source is not available to the assistant.'],
@@ -188,6 +289,7 @@ function renderStatus(data) {
   const metadata = {'Scan': data.scan_id,
     'Completed checks': `${new Set(data.completed_checks).size} / ${new Set(data.required_checks).size}`,
     'Coverage': data.coverage?.complete === true ? 'Complete' : data.coverage?.complete === false ? 'Incomplete' : 'Not reported',
+    'Inference': inference === 'REPLAY' ? 'REPLAY (recorded responses)' : inference === 'LIVE' ? 'Live model' : 'Not reported',
     'Result expires': Number.isFinite(resultExpiry(data)) ? new Date(resultExpiry(data)).toLocaleString() : 'Not issued'};
   for (const [key, value] of Object.entries(metadata)) {
     const dt = document.createElement('dt'), dd = document.createElement('dd');
@@ -195,11 +297,20 @@ function renderStatus(data) {
     $('scan-meta').append(dt, dd);
   }
   $('checks').replaceChildren();
+  const finished = ['DECIDED', 'FAILED', 'CANCELED'].includes(data.state);
+  const failedLabel = {ERROR: 'Error', INCOMPLETE: 'Incomplete'};
   for (const check of new Set(data.required_checks)) {
     const li = document.createElement('li');
     const complete = data.completed_checks.includes(check);
-    li.textContent = `${complete ? 'Complete' : 'Waiting'} · ${roleInfo[check] || readableName(check)}`;
-    li.dataset.complete = String(complete); $('checks').append(li);
+    // After a decision, a check that did not complete is a failure, never "waiting".
+    const reported = check === 'EXTRACTION'
+      ? (data.coverage?.extraction || []).map(e => e.status).find(s => s !== 'COMPLETE')
+      : data.coverage?.inspections?.[check];
+    const label = complete ? 'Complete' : !finished ? 'Waiting' : (failedLabel[reported] || (data.state === 'CANCELED' ? 'Canceled' : 'Did not return'));
+    li.textContent = `${label} · ${roleInfo[check] || readableName(check)}`;
+    li.dataset.complete = String(complete);
+    if (!complete && finished) li.dataset.failed = 'true';
+    $('checks').append(li);
   }
   $('reasons').replaceChildren();
   const reasonCodes = (data.reason_codes || []).slice(0, 64).map(safeCode);
@@ -358,7 +469,7 @@ $('upload-form').addEventListener('submit', event => {
     const data = await api('/v1/resources', {media_type: /\.eml$/i.test(file.name) ? 'message/rfc822' : 'text/plain', content_base64: btoa(binary)});
     if (data.storage_state !== 'STORED') throw new Error('SERVICE_UNAVAILABLE');
     const resourceId = validId(data.resource_id);
-    state.resources.push({id: resourceId, size: file.size});
+    state.resources.push({id: resourceId, size: file.size, hash: digestPattern.test(data.original_hash) ? data.original_hash : null});
     $('empty-resources').hidden = true;
     const label = document.createElement('label'), checkbox = document.createElement('input');
     checkbox.type = 'checkbox'; checkbox.value = resourceId; checkbox.checked = true;
@@ -380,6 +491,8 @@ $('scan-form').addEventListener('submit', event => {
     const task = await api('/v1/task-sessions', {policy_id: $('policy').value, resource_ids: resourceIds});
     if (generation !== state.generation) return;
     state.task = validId(task.task_session_id);
+    state.scanPolicy = $('policy').value; state.scanResources = resourceIds;
+    $('compare-button').disabled = resourceIds.length !== 1;
     const scan = await api('/v1/scans', {task_session_id: state.task}, crypto.randomUUID());
     if (generation !== state.generation) return;
     state.scan = validId(scan.scan_id); state.delay = 1000;
@@ -413,7 +526,89 @@ $('result-button').addEventListener('click', () => exclusive($('result-button'),
   const scan = state.scan, generation = state.generation;
   const data = await api(`/v1/scans/${scan}/result`);
   if (generation !== state.generation || !canReadResult()) return;
-  renderText('result', data); $('result-panel').hidden = false;
+  $('result-replay-banner').hidden = data.inference_mode !== 'REPLAY';
+  renderText('result', data); renderProvenance(scan, data); $('result-panel').hidden = false;
+}));
+const sourceCache = new Map();
+function renderProvenance(scan, data) {
+  const list = $('value-list');
+  list.replaceChildren(); sourceCache.clear();
+  $('source-view').hidden = $('source-caption').hidden = true; $('source-view').replaceChildren();
+  const output = data?.result?.output || {};
+  const items = [];
+  if (output.fields && typeof output.fields === 'object') {
+    for (const [name, field] of Object.entries(output.fields).slice(0, 16)) {
+      if (field && typeof field === 'object' && !field.absent) items.push({label: readableName(name.toUpperCase()), value: String(field.value ?? ''), refs: field.source_refs});
+      else items.push({label: readableName(name.toUpperCase()), value: 'Not present in the source', refs: []});
+    }
+  }
+  for (const statement of (Array.isArray(output.statements) ? output.statements.slice(0, 32) : [])) {
+    items.push({label: 'Statement', value: String(statement?.text ?? ''), refs: statement?.source_refs});
+  }
+  for (const item of items) {
+    const refs = (Array.isArray(item.refs) ? item.refs : []).filter(r => idPattern.test(r?.resource_id || '') && digestPattern.test(r?.view_hash || '')
+      && Number.isInteger(r.start) && Number.isInteger(r.end) && r.start >= 0 && r.end > r.start).slice(0, 8);
+    const li = element('li');
+    li.append(element('span', `${item.label}: `, 'value-label'));
+    if (!refs.length) { li.append(element('span', item.value.slice(0, 2000))); list.append(li); continue; }
+    const button = element('button', item.value.slice(0, 2000), 'value-button secondary');
+    button.addEventListener('click', () => exclusive(button, () => showSource(scan, refs[0], item.label)));
+    li.append(button);
+    if (refs.length > 1) li.append(element('span', ` (${refs.length} sources; showing the first)`, 'hint'));
+    list.append(li);
+  }
+}
+async function showSource(scan, ref, label) {
+  const generation = state.generation;
+  const key = `${ref.resource_id}/${ref.view_hash}`;
+  let view = sourceCache.get(key);
+  if (!view) {
+    view = await api(`/v1/scans/${validId(scan)}/sources/${validId(ref.resource_id)}/${ref.view_hash}`);
+    if (generation !== state.generation || !canReadResult()) return;
+    if (view.offset_unit !== 'UNICODE_CODE_POINT' || typeof view.text !== 'string') throw new Error('SERVICE_UNAVAILABLE');
+    sourceCache.set(key, view);
+  }
+  // Spans are half-open Unicode code-point offsets; JS strings are UTF-16, so index code points.
+  const points = Array.from(view.text);
+  const pre = $('source-view');
+  pre.replaceChildren();
+  if (ref.end > points.length) {
+    pre.append(document.createTextNode(view.text));
+    $('source-caption').textContent = `${label}: the cited span lies beyond the displayed part of this view.`;
+  } else {
+    const mark = element('mark', points.slice(ref.start, ref.end).join(''), 'source-mark');
+    pre.append(document.createTextNode(points.slice(0, ref.start).join('')), mark, document.createTextNode(points.slice(ref.end).join('')));
+    $('source-caption').textContent = `${label}: characters ${ref.start}–${ref.end} of ${readableName(String(view.kind || 'view').toUpperCase())} view (resource ${ref.resource_id}).`;
+    requestAnimationFrame(() => mark.scrollIntoView({block: 'center', behavior: 'smooth'}));
+  }
+  $('source-caption').hidden = false; pre.hidden = false;
+}
+function renderBaseline(data) {
+  const body = $('baseline-body');
+  body.replaceChildren();
+  if (!data) {
+    body.append(element('p', 'No recorded baseline for this input and task. Run make eval to record baselines for the demo inputs.', 'hint'));
+    return;
+  }
+  body.append(element('p', `Model ${String(data.model).slice(0, 80)} · ${String(data.inference).slice(0, 32)} · recorded ${String(data.recorded_at).slice(0, 32)}`, 'hint'));
+  if (data.failed) { body.append(element('p', 'The naive agent run failed for this input, so there is no baseline outcome.', 'hint')); return; }
+  const calls = Array.isArray(data.tool_calls) ? data.tool_calls.slice(0, 16) : [];
+  body.append(element('h3', calls.length ? 'Tools it executed immediately (simulated)' : 'Tools it executed'));
+  const list = element('ul', undefined, 'flag-list');
+  for (const call of calls) list.append(element('li', `${String(call.operation).slice(0, 64)} ${String(call.arguments).slice(0, 300)}`, 'forbidden'));
+  if (!calls.length) list.append(element('li', 'None', 'hint'));
+  body.append(list, element('h3', 'What it answered'), element('pre', String(data.answer ?? '').slice(0, 4000)));
+}
+$('compare-button').addEventListener('click', () => exclusive($('compare-button'), async () => {
+  const resources = state.scanResources || [];
+  const resource = state.resources.find(r => r.id === resources[0]);
+  if (resources.length !== 1 || !resource?.hash || !/^[a-z_]{1,32}$/.test(state.scanPolicy || '')) throw new Error('INVALID_REQUEST');
+  const generation = state.generation;
+  let data = null;
+  try { data = await api(`/v1/baselines/${state.scanPolicy}/${resource.hash}`); }
+  catch (error) { if (error.message !== 'NOT_FOUND') throw error; }
+  if (generation !== state.generation) return;
+  renderBaseline(data); $('baseline-panel').hidden = false;
 }));
 $('chat-button').addEventListener('click', () => exclusive($('chat-button'), async () => {
   const generation = state.generation;

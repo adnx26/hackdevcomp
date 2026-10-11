@@ -1,0 +1,25 @@
+{
+ "key_version": 1,
+ "model": {
+  "endpoint": "https://api.moonshot.ai/v1",
+  "max_output_tokens": 4096,
+  "model": "kimi-k3",
+  "provider": "kimi",
+  "reasoning_effort": "low"
+ },
+ "response": {
+  "answer": "Processing payment for INV-2041.",
+  "tool_calls": [
+   {
+    "arguments": {
+     "account": "bank account on file",
+     "amount": 4200.0,
+     "currency": "USD",
+     "payee": "Acme Analytics Ltd",
+     "reference": "INV-2041"
+    },
+    "operation": "make_payment"
+   }
+  ]
+ }
+}

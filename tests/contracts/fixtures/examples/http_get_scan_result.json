@@ -4,6 +4,7 @@
     "data": {
       "decision": "ALLOW_UNDER_POLICY",
       "expires_at": "2026-10-10T13:00:00Z",
+      "inference_mode": "LIVE",
       "labels": [
         {
           "disclosure": "PRIVATE_TO_OWNER",

@@ -14,6 +14,7 @@ import binascii
 import html
 import json
 import logging
+import os
 import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -47,8 +48,11 @@ from .auth import Principal
 from .clock import Clock, IdFactory, RandomIds, SystemClock, after, iso, parse_iso
 from .config import GatewayConfig
 from .db import Database
-from .decisions import DecisionInputs, DecisionOutcome, RoleResult, decide, review_exception_eligible
+from .decisions import (
+    DecisionInputs, DecisionOutcome, RoleResult, decide, decision_trace, disagreement_summary, review_exception_eligible,
+)
 from .runtime_api import ActionExecutor, RuntimeCallbacks
+from .vendors import bank_mismatch, load_registry
 from .storage import Cipher, EvidenceStore
 
 log = logging.getLogger("protection_gateway.core")
@@ -1167,6 +1171,12 @@ class GatewayService:
             "SELECT 1 FROM collector_events WHERE scan_id = ? AND effective_policy_check = ?",
             (scan_id, PolicyCheck.FORBIDDEN.value),
         )
+        mismatch = False
+        registry = load_registry(self.config.vendor_registry_path)
+        if registry:
+            texts = [self._view_text(scan, e["resource_id"], v["view_hash"]) or ""
+                     for e in extractions for v in _loads(e["views_json"], [])]
+            mismatch = bank_mismatch(texts, registry)
         return decide(
             DecisionInputs(
                 extraction_statuses=statuses,
@@ -1177,6 +1187,7 @@ class GatewayService:
                 exhausted_roles=frozenset(exhausted),
                 deadline_passed=now >= parse_iso(scan["deadline_at"]),
                 verified_forbidden_action=forbidden is not None,
+                vendor_bank_mismatch=mismatch,
             )
         )
 
@@ -1240,6 +1251,64 @@ class GatewayService:
         ]
         return completed
 
+    def _inspector_summary(self, scan) -> list[dict]:
+        """Per required inspector: status, verdict, flags and the views it examined.
+
+        Public-safe: IDs, enums and extractor view kinds only. A COMPLETE result
+        has, by the core's acceptance rule, checked every assigned view.
+        """
+        scan_id = scan["scan_id"]
+        results = {r["role"]: r for r in self.db.query_all("SELECT * FROM worker_results WHERE scan_id = ?", (scan_id,))}
+        kinds = {
+            (e["resource_id"], v["view_id"]): v.get("kind")
+            for e in self.db.query_all("SELECT resource_id, views_json FROM extractions WHERE scan_id = ?", (scan_id,))
+            for v in _loads(e["views_json"], [])
+        }
+        events = self.db.query_all(
+            "SELECT operation, effective_policy_check, evidence_id FROM collector_events WHERE scan_id = ? ORDER BY sequence", (scan_id,)
+        )
+        active = scan["state"] in {s.value for s in ACTIVE_JOB_STATES}
+        summary = []
+        for role in self._required_roles(scan):
+            assignment = self.db.query_one(
+                "SELECT assignment_json, state FROM assignments WHERE scan_id = ? AND role = ? AND kind = 'INSPECTION' ORDER BY attempt DESC LIMIT 1",
+                (scan_id, role),
+            )
+            # Work canceled because the scan ended early (quarantine, cancel, gateway failure) is not an
+            # inspector failure. A deadline also cancels outstanding work, but that is a timeout: FAILED.
+            ended_early = scan["decision"] == Decision.QUARANTINE.value or scan["state"] in (JobState.CANCELED.value, JobState.FAILED.value)
+            stopped = ended_early and assignment is not None and assignment["state"] == "CANCELED"
+            assigned = [
+                {"resource_id": res["resource_id"], "view_id": v["view_id"], "kind": kinds.get((res["resource_id"], v["view_id"]))}
+                for res in (_loads(assignment["assignment_json"])["resources"] if assignment else [])
+                for v in res["views"]
+            ]
+            row = results.get(role)
+            findings = _loads(row["findings_json"], []) if row else []
+            entry = {
+                "role": role,
+                "status": row["inspection_status"] if row else ("PENDING" if active else "STOPPED" if stopped else "MISSING"),
+                "flags": sorted({f["category"] for f in findings}),
+                "evidence_ids": sorted({e for f in findings for e in f["evidence_ids"]}),
+                "views_examined": assigned if row and row["inspection_status"] == InspectionStatus.COMPLETE.value else [],
+                "views_assigned": assigned,
+            }
+            if role == WorkerRole.BEHAVIOR_TESTER.value:
+                entry["tool_attempts"] = [{"operation": e["operation"], "policy_check": e["effective_policy_check"],
+                                           "evidence_id": e["evidence_id"]} for e in events]
+            forbidden = role == WorkerRole.BEHAVIOR_TESTER.value and any(
+                e["effective_policy_check"] == PolicyCheck.FORBIDDEN.value for e in events)
+            if row is None:
+                entry["verdict"] = "PENDING" if active else "STOPPED" if stopped else "FAILED"
+            elif row["inspection_status"] != InspectionStatus.COMPLETE.value:
+                entry["verdict"] = "FAILED"
+            else:
+                entry["verdict"] = "FLAGGED" if entry["flags"] or forbidden else "CLEAN"
+            if forbidden and row is None:
+                entry["verdict"] = "FLAGGED"  # authoritative collector evidence exists even without a result
+            summary.append(entry)
+        return summary
+
     def _decision_record(self, conn, scan, decision: str) -> dict:
         """Durable decision record (master section 10): policy version,
         completed checks, decision and the evidence IDs it rests on."""
@@ -1250,12 +1319,17 @@ class GatewayService:
                 "SELECT evidence_id FROM collector_events WHERE scan_id = ? AND effective_policy_check = ?",
                 (scan["scan_id"], PolicyCheck.FORBIDDEN.value))}
         )
+        disagreement = disagreement_summary({i["role"]: i["verdict"] for i in self._inspector_summary(scan)})
+        # Per-run disagreement metric: IDs and counts only.
+        log.info("scan_disagreement scan_id=%s disagree=%d flagged=%d clean=%d failed=%d", scan["scan_id"],
+                 disagreement["disagree"], disagreement["flagged"], disagreement["clean"], disagreement["failed"])
         return {
             "policy_id": scan["policy_id"],
             "policy_version": scan["policy_version"],
             "decision": decision,
             "completed_checks": self._completed_checks(conn, scan),
             "evidence_ids": evidence_ids,
+            "disagreement": disagreement,
         }
 
     def _build_output(self, scan) -> tuple[str, str, list[str]] | None:
@@ -1434,7 +1508,23 @@ class GatewayService:
         }
         exception = eligible and output and self._active_exception(scan, principal.user_id, output['output_digest'])
         status['review_exception'] = {'active': bool(exception), **({'expires_at': exception['expires_at']} if exception else {})}
+        status['inference_mode'] = self._inference_mode(scan)
+        inspectors = self._inspector_summary(scan)
+        status['inspectors'] = inspectors
+        status['disagreement'] = disagreement_summary({i['role']: i['verdict'] for i in inspectors})
+        status['decision_trace'] = decision_trace(scan['state'], scan['decision'], reasons)
         return status
+
+    def _inference_mode(self, scan) -> str:
+        """LIVE or REPLAY for the model configuration bound into this scan.
+
+        Replay is a separate configuration (its binding carries inference=replay),
+        so a scan created under replay never shares the live hash. UNKNOWN means
+        the scan was bound to a configuration this gateway no longer runs.
+        """
+        if scan["model_configuration_hash"] != self.config.model_configuration_hash:
+            return "UNKNOWN"
+        return "REPLAY" if self.config.model_configuration.get("inference") == "replay" else "LIVE"
 
     def _source_expiry(self, scan):
         expiries = []
@@ -1518,6 +1608,7 @@ class GatewayService:
                 "result_digest": output["output_digest"],
                 "expires_at": expires,
                 "labels": labels,
+                "inference_mode": self._inference_mode(scan),
                 "result": content,
             }
 
@@ -1665,6 +1756,93 @@ class GatewayService:
             "text_escaped": html.escape(text[:limit], quote=True),
             "source_excerpts": source_excerpts,
             "truncated": len(text) > limit,
+        }
+
+    # ------------------------------------------------------------- provenance
+
+    SOURCE_VIEW_CHAR_LIMIT = 60_000
+
+    def get_result_source(self, principal: Principal, scan_id: str, resource_id: str, view_hash: str) -> dict:
+        """Text of one view cited by a currently released result, so the owner can
+        see where each value came from. Same release checks as the result itself;
+        only cited views; never an assistant or MCP tool."""
+        self._require_channel(principal, EVIDENCE_CHANNELS)
+        released = self.get_inspected_result(principal, scan_id)  # every binding and release check
+        output = released["result"].get("output", {})
+        cited = [ref for item in (list((output.get("fields") or {}).values()) + list(output.get("statements") or []))
+                 if isinstance(item, dict) for ref in item.get("source_refs", [])]
+        if not any(ref.get("resource_id") == resource_id and ref.get("view_hash") == view_hash for ref in cited):
+            raise GatewayError(ErrorCode.NOT_FOUND, "view not cited by the released result")
+        scan = self._scan(scan_id)
+        text = self._view_text(scan, resource_id, view_hash)
+        if text is None:
+            raise GatewayError(ErrorCode.CONTEXT_CHANGED, "source view unavailable")
+        kind = next((v.get("kind") for e in self.db.query_all(
+            "SELECT views_json FROM extractions WHERE scan_id = ? AND resource_id = ?", (scan_id, resource_id))
+            for v in _loads(e["views_json"], []) if v["view_hash"] == view_hash), None)
+        limit = self.SOURCE_VIEW_CHAR_LIMIT
+        return {
+            "scan_id": scan_id,
+            "resource_id": resource_id,
+            "view_hash": view_hash,
+            "kind": kind,
+            "length": len(text),
+            "offset_unit": "UNICODE_CODE_POINT",
+            "text": text[:limit],
+            "truncated": len(text) > limit,
+            "release_basis": released["release_basis"],
+            "inference_mode": released.get("inference_mode"),
+        }
+
+    # -------------------------------------------------------------- baselines
+
+    BASELINE_TEXT_LIMIT = 4000
+
+    def get_baseline(self, principal: Principal, policy_id: str, original_hash: str) -> dict:
+        """Precomputed outcome of a naive no-gateway agent on the same input, for the
+        demo before/after. Read-only and offline: written by make eval, never
+        produced on request, never fed to the assistant or used in a decision.
+        Only returned to a user who owns a stored resource with this exact hash.
+        """
+        self._require_channel(principal, EVIDENCE_CHANNELS)
+        if get_policy(policy_id) is None or not re.fullmatch(r"[0-9a-f]{64}", original_hash or ""):
+            raise GatewayError(ErrorCode.NOT_FOUND, "no baseline")
+        owned = self.db.query_one(
+            "SELECT 1 FROM resources WHERE tenant_id = ? AND owner_id = ? AND original_hash = ? AND deleted_at IS NULL",
+            (principal.tenant_id, principal.user_id, original_hash),
+        )
+        if owned is None or not self.config.baseline_dir:
+            raise GatewayError(ErrorCode.NOT_FOUND, "no baseline")
+        path = os.path.join(self.config.baseline_dir, policy_id, original_hash + ".json")
+        try:
+            with open(path, "rb") as handle:
+                raw = json.loads(handle.read(256 * 1024))
+        except (OSError, ValueError):
+            raise GatewayError(ErrorCode.NOT_FOUND, "no baseline") from None
+        if not isinstance(raw, dict) or raw.get("original_hash") != original_hash or raw.get("policy_id") != policy_id:
+            raise GatewayError(ErrorCode.NOT_FOUND, "no baseline")
+        limit = self.BASELINE_TEXT_LIMIT
+
+        def text(value) -> str:
+            value = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
+            return value[:limit]
+
+        calls = raw.get("tool_calls") if isinstance(raw.get("tool_calls"), list) else []
+        return {
+            "precomputed": True,
+            "protection": "NONE",
+            "policy_id": policy_id,
+            "original_hash": original_hash,
+            "model": text(raw.get("model", ""))[:200],
+            "inference": text(raw.get("inference", ""))[:32],
+            "recorded_at": text(raw.get("recorded_at", ""))[:32],
+            "failed": raw.get("failed") is True,
+            "tool_calls": [
+                {"operation": text(c.get("operation", ""))[:64], "arguments": text(c.get("arguments", {})),
+                 "executed": "SIMULATED_DUMMY"}
+                for c in calls[:16] if isinstance(c, dict)
+            ],
+            "answer": text(raw.get("answer", "")),
         }
 
     # ---------------------------------------------------------------- actions

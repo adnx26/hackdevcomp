@@ -87,9 +87,9 @@ class WorkerRecord:
 _WORKERS = "protection_gateway.workers:"
 DEFAULT_ROSTER = (
     WorkerRecord("pg.worker.extractor", ROLE_EXTRACTOR, _WORKERS + "extract", "none", "c-extractor-1"),
-    WorkerRecord("pg.worker.instruction", ROLE_INSTRUCTION_INSPECTOR, _WORKERS + "inspect", "c-prompts-2", "c-workers-1"),
-    WorkerRecord("pg.worker.data", ROLE_DATA_TOOL_INSPECTOR, _WORKERS + "inspect", "c-prompts-2", "c-workers-1"),
-    WorkerRecord("pg.worker.behavior", ROLE_BEHAVIOR_TESTER, _WORKERS + "inspect", "c-prompts-2", "c-workers-1"),
+    WorkerRecord("pg.worker.instruction", ROLE_INSTRUCTION_INSPECTOR, _WORKERS + "inspect", "c-prompts-2", "c-workers-2"),
+    WorkerRecord("pg.worker.data", ROLE_DATA_TOOL_INSPECTOR, _WORKERS + "inspect", "c-prompts-2", "c-workers-2"),
+    WorkerRecord("pg.worker.behavior", ROLE_BEHAVIOR_TESTER, _WORKERS + "inspect", "c-prompts-2", "c-workers-2"),
 )
 
 

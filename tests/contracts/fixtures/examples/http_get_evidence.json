@@ -8,6 +8,7 @@
       "kind": "EXPLANATION",
       "scan_id": "scan_0006",
       "source": "WORKER_ARTIFACT",
+      "source_excerpts": [],
       "text_escaped": "Imperative override aimed at the assistant.",
       "truncated": false
     }
