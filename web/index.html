@@ -23,7 +23,7 @@
           <input id="folder-upload" class="visually-hidden" type="file" webkitdirectory multiple tabindex="-1" aria-label="Choose a folder for scanning">
         </div>
         <div id="selection" hidden><p id="selection-summary"></p><details><summary>View selected files</summary><ul id="selection-files"></ul></details></div>
-        <div class="scan-launch"><p class="hint">Up to 10 text or email files · 1 MiB each · 2 MiB total<br>Unsupported files are listed as uninspected.</p><button id="folder-button" disabled>Scan Now <span aria-hidden="true">→</span></button></div>
+        <div class="scan-launch"><p class="hint">Up to 10 text or email files · 1 MiB each · 2 MiB total<br>macOS .DS_Store metadata is excluded. Other unsupported files are listed as uninspected.</p><button id="folder-button" disabled>Scan Now <span aria-hidden="true">→</span></button></div>
       </form>
       <section id="scan-progress" class="scan-progress" hidden aria-labelledby="progress-heading"><div class="progress-top"><h3 id="progress-heading">Preparing your files</h3><span id="progress-count"></span></div><progress id="scan-progress-bar" max="100" value="0" aria-label="Completed upload and inspection steps"></progress><p id="progress-description" role="status"></p><ul id="progress-files"></ul></section>
     </section>

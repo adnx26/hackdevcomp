@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const state = {csrf: null, resources: [], task: null, scan: null, status: null,
   action: null, actionRevision: 0, timer: null, expiryTimer: null, actionExpiryTimer: null,
-  selectedFiles: [], folderScanning: false, folder: null, folderTimer: null, folderDelay: 1000, generation: 0, delay: 1000, polling: false, busy: false};
+  selectedFiles: [], excludedMetadata: [], folderScanning: false, folder: null, folderTimer: null, folderDelay: 1000, generation: 0, delay: 1000, polling: false, busy: false};
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const knownErrors = new Set(['UNAUTHENTICATED','FORBIDDEN','NOT_FOUND','INVALID_REQUEST',
@@ -60,6 +60,16 @@ function safeCode(value) { return /^[A-Z][A-Z0-9_]{0,63}$/.test(value || '') ? v
 function fail(error) {
   if (Number.isInteger(error.generation) && error.generation !== state.generation) return;
   const code = knownErrors.has(error.message) ? error.message : 'SERVICE_UNAVAILABLE';
+  if (code === 'UNAUTHENTICATED') {
+    state.csrf = null;
+    state.resources = [];
+    invalidate();
+    $('identity').textContent = 'Sign in to begin';
+    if ($('login-form')) $('login-form').hidden = false;
+    $('upload-button').disabled = true;
+    notice('Your session is no longer valid. Sign in again with the current local gateway login token. Content remains held.', true);
+    return;
+  }
   notice(code + '. Content remains held unless the gateway grants a current permitted result.', true);
   clearReleased();
   if (['CONTEXT_CHANGED','UNAUTHENTICATED','FORBIDDEN'].includes(code)) invalidate();
@@ -348,6 +358,7 @@ async function exclusive(button, operation) {
   finally {
     state.busy = false; button.disabled = false;
     updateScanControls();
+    $('upload-button').disabled = !state.csrf;
     $('confirm-action').disabled = !actionCurrent(state.action) || !$('exact-approval').checked;
     if (button.id === 'result-button') {
       button.disabled = !canReadResult();
@@ -409,12 +420,17 @@ function selectScanFiles(files) {
   if (state.busy || state.folderScanning) return;
   invalidate();
   state.selectedFiles = [];
+  state.excludedMetadata = [];
   $('selection-files').replaceChildren();
   if (!files.length || files.length > 100 || new Set(files.map(item => item.path)).size !== files.length) {
     $('selection').hidden = true;
     notice('Choose 1–100 files with unique relative paths. No files were uploaded.', true);
     updateScanControls(); return;
   }
+  state.excludedMetadata = files.filter(item => item.path.split('/').pop() === '.DS_Store');
+  // Directory enumeration order varies by browser; match the demo runner's path order.
+  files = files.filter(item => item.path.split('/').pop() !== '.DS_Store')
+    .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   state.selectedFiles = files;
   $('selection').hidden = false;
   $('selection-summary').textContent = `${files.length} ${files.length === 1 ? 'file' : 'files'} ready to scan`;
@@ -422,7 +438,12 @@ function selectScanFiles(files) {
     const item = document.createElement('li'); item.textContent = path;
     $('selection-files').append(item);
   }
-  notice('Your files are ready. Select Scan Now to begin.');
+  for (const {path} of state.excludedMetadata) {
+    const item = document.createElement('li'); item.textContent = `${path} — macOS metadata excluded; not inspected`;
+    $('selection-files').append(item);
+  }
+  if (state.excludedMetadata.length) $('selection-summary').textContent += ` · ${state.excludedMetadata.length} .DS_Store metadata ${state.excludedMetadata.length === 1 ? 'file' : 'files'} excluded`;
+  notice(files.length ? 'Your files are ready. Select Scan Now to begin.' : 'Only macOS metadata was selected. Choose content files to scan.');
   updateScanControls();
 }
 $('choose-files').addEventListener('click', () => $('scan-files').click());
@@ -543,6 +564,7 @@ function renderFolder(data) {
   }
   if (errors.size && !data.coverage_complete) $('folder-summary').textContent += ' ' + [...errors].map(code => diagnosticInfo[code] || 'The inspection provider failed to return a report.').join(' ');
   else if (!data.coverage_complete && data.reason_codes?.includes('INSPECTION_ERROR')) $('folder-summary').textContent += ' A required inspection failed; this is not a clean result.';
+  if (state.excludedMetadata.length) $('folder-summary').textContent += ` ${state.excludedMetadata.length} .DS_Store metadata ${state.excludedMetadata.length === 1 ? 'file was' : 'files were'} excluded before upload; not inspected.`;
   $('folder-reference').textContent = `Folder ID for MCP: ${data.folder_id}${data.scan_id ? ' · Scan: ' + validId(data.scan_id) : ''}`;
   $('folder-files').replaceChildren();
   for (const file of [...data.files].sort((a, b) => (b.status === 'FLAGGED') - (a.status === 'FLAGGED'))) {
