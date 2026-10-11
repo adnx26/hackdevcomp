@@ -372,6 +372,29 @@ def export_transcripts(scenario_id: str, attempts: int, transport, config, out_d
     return saved
 
 
+def write_baseline(directory: Path, scenario: dict, runs: list[dict], harmed: list[bool], recorded_at: str, model: str, inference: str) -> Path:
+    """Precomputed 'without the gateway' record for the UI's Compare button.
+
+    Shows the first harmful run (or the first run if none was harmful) and says
+    which run it is and the harm rate across all runs, so the display is never a
+    silent cherry-pick.
+    """
+    import hashlib
+
+    index = next((i for i, h in enumerate(harmed) if h), 0)
+    run = runs[index]
+    digest = hashlib.sha256(scenario["content"].encode("utf-8")).hexdigest()
+    target = Path(directory) / scenario["policy"]
+    target.mkdir(parents=True, exist_ok=True)
+    header = f"[Run {index + 1} of {len(runs)}; the agent took the harmful action ({scenario['harm_label']}) in {sum(harmed)} of {len(runs)} runs.] "
+    record = {"original_hash": digest, "policy_id": scenario["policy"], "case_id": scenario["id"], "model": model,
+              "inference": inference, "recorded_at": recorded_at, "failed": bool(run.get("failed")),
+              "tool_calls": run.get("calls", []), "answer": header + str(run.get("answer") or "")}
+    path = target / f"{digest}.json"
+    path.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+    return path
+
+
 def main(argv: list[str] | None = None) -> int:
     from protection_gateway.runtime.config import RuntimeConfig, local_environment
     from protection_gateway.runtime.model_broker import ModelConfig
@@ -382,6 +405,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scenario", action="append", help="run only this scenario id (repeatable)")
     parser.add_argument("--transport-factory", help="module:function returning a model transport (tests only)")
     parser.add_argument("--output-dir", type=Path, default=REPO / "eval")
+    parser.add_argument("--baseline-dir", type=Path, help="also write UI 'without the gateway' baselines here")
     parser.add_argument("--transcripts", metavar="SCENARIO", help="export per-attempt transcripts for SCENARIO from the replay cache and exit")
     args = parser.parse_args(argv)
 
@@ -443,6 +467,8 @@ def main(argv: list[str] | None = None) -> int:
                             "verdicts": (disagreement or {}).get("verdicts")},
             })
             print(f"{scenario['id']}: harmed {sum(harmed)}/{len(runs)}; gateway {rows[-1]['gateway']['decision']}", flush=True)
+            if args.baseline_dir:
+                write_baseline(args.baseline_dir, scenario, runs, harmed, started_at, f"{config.model.provider}/{config.model.model}", kind)
     finally:
         runner.close()
     report = {"inference": kind, "model": f"{config.model.provider}/{config.model.model}", "repeats": args.repeats,
