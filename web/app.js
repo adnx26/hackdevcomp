@@ -227,6 +227,8 @@ function canReadResult(data = state.status) {
 function clearReleased() {
   $('result-panel').hidden = true;
   $('result-replay-banner').hidden = true;
+  $('value-list').replaceChildren(); $('source-view').replaceChildren(); $('source-view').hidden = $('source-caption').hidden = true;
+  sourceCache.clear();
   $('result').textContent = '';
   $('chat-result').hidden = true;
   $('chat-result').textContent = '';
@@ -523,8 +525,62 @@ $('result-button').addEventListener('click', () => exclusive($('result-button'),
   const data = await api(`/v1/scans/${scan}/result`);
   if (generation !== state.generation || !canReadResult()) return;
   $('result-replay-banner').hidden = data.inference_mode !== 'REPLAY';
-  renderText('result', data); $('result-panel').hidden = false;
+  renderText('result', data); renderProvenance(scan, data); $('result-panel').hidden = false;
 }));
+const sourceCache = new Map();
+function renderProvenance(scan, data) {
+  const list = $('value-list');
+  list.replaceChildren(); sourceCache.clear();
+  $('source-view').hidden = $('source-caption').hidden = true; $('source-view').replaceChildren();
+  const output = data?.result?.output || {};
+  const items = [];
+  if (output.fields && typeof output.fields === 'object') {
+    for (const [name, field] of Object.entries(output.fields).slice(0, 16)) {
+      if (field && typeof field === 'object' && !field.absent) items.push({label: readableName(name.toUpperCase()), value: String(field.value ?? ''), refs: field.source_refs});
+      else items.push({label: readableName(name.toUpperCase()), value: 'Not present in the source', refs: []});
+    }
+  }
+  for (const statement of (Array.isArray(output.statements) ? output.statements.slice(0, 32) : [])) {
+    items.push({label: 'Statement', value: String(statement?.text ?? ''), refs: statement?.source_refs});
+  }
+  for (const item of items) {
+    const refs = (Array.isArray(item.refs) ? item.refs : []).filter(r => idPattern.test(r?.resource_id || '') && digestPattern.test(r?.view_hash || '')
+      && Number.isInteger(r.start) && Number.isInteger(r.end) && r.start >= 0 && r.end > r.start).slice(0, 8);
+    const li = element('li');
+    li.append(element('span', `${item.label}: `, 'value-label'));
+    if (!refs.length) { li.append(element('span', item.value.slice(0, 2000))); list.append(li); continue; }
+    const button = element('button', item.value.slice(0, 2000), 'value-button secondary');
+    button.addEventListener('click', () => exclusive(button, () => showSource(scan, refs[0], item.label)));
+    li.append(button);
+    if (refs.length > 1) li.append(element('span', ` (${refs.length} sources; showing the first)`, 'hint'));
+    list.append(li);
+  }
+}
+async function showSource(scan, ref, label) {
+  const generation = state.generation;
+  const key = `${ref.resource_id}/${ref.view_hash}`;
+  let view = sourceCache.get(key);
+  if (!view) {
+    view = await api(`/v1/scans/${validId(scan)}/sources/${validId(ref.resource_id)}/${ref.view_hash}`);
+    if (generation !== state.generation || !canReadResult()) return;
+    if (view.offset_unit !== 'UNICODE_CODE_POINT' || typeof view.text !== 'string') throw new Error('SERVICE_UNAVAILABLE');
+    sourceCache.set(key, view);
+  }
+  // Spans are half-open Unicode code-point offsets; JS strings are UTF-16, so index code points.
+  const points = Array.from(view.text);
+  const pre = $('source-view');
+  pre.replaceChildren();
+  if (ref.end > points.length) {
+    pre.append(document.createTextNode(view.text));
+    $('source-caption').textContent = `${label}: the cited span lies beyond the displayed part of this view.`;
+  } else {
+    const mark = element('mark', points.slice(ref.start, ref.end).join(''), 'source-mark');
+    pre.append(document.createTextNode(points.slice(0, ref.start).join('')), mark, document.createTextNode(points.slice(ref.end).join('')));
+    $('source-caption').textContent = `${label}: characters ${ref.start}–${ref.end} of ${readableName(String(view.kind || 'view').toUpperCase())} view (resource ${ref.resource_id}).`;
+    requestAnimationFrame(() => mark.scrollIntoView({block: 'center', behavior: 'smooth'}));
+  }
+  $('source-caption').hidden = false; pre.hidden = false;
+}
 function renderBaseline(data) {
   const body = $('baseline-body');
   body.replaceChildren();

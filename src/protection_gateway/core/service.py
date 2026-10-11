@@ -1750,6 +1750,42 @@ class GatewayService:
             "truncated": len(text) > limit,
         }
 
+    # ------------------------------------------------------------- provenance
+
+    SOURCE_VIEW_CHAR_LIMIT = 60_000
+
+    def get_result_source(self, principal: Principal, scan_id: str, resource_id: str, view_hash: str) -> dict:
+        """Text of one view cited by a currently released result, so the owner can
+        see where each value came from. Same release checks as the result itself;
+        only cited views; never an assistant or MCP tool."""
+        self._require_channel(principal, EVIDENCE_CHANNELS)
+        released = self.get_inspected_result(principal, scan_id)  # every binding and release check
+        output = released["result"].get("output", {})
+        cited = [ref for item in (list((output.get("fields") or {}).values()) + list(output.get("statements") or []))
+                 if isinstance(item, dict) for ref in item.get("source_refs", [])]
+        if not any(ref.get("resource_id") == resource_id and ref.get("view_hash") == view_hash for ref in cited):
+            raise GatewayError(ErrorCode.NOT_FOUND, "view not cited by the released result")
+        scan = self._scan(scan_id)
+        text = self._view_text(scan, resource_id, view_hash)
+        if text is None:
+            raise GatewayError(ErrorCode.CONTEXT_CHANGED, "source view unavailable")
+        kind = next((v.get("kind") for e in self.db.query_all(
+            "SELECT views_json FROM extractions WHERE scan_id = ? AND resource_id = ?", (scan_id, resource_id))
+            for v in _loads(e["views_json"], []) if v["view_hash"] == view_hash), None)
+        limit = self.SOURCE_VIEW_CHAR_LIMIT
+        return {
+            "scan_id": scan_id,
+            "resource_id": resource_id,
+            "view_hash": view_hash,
+            "kind": kind,
+            "length": len(text),
+            "offset_unit": "UNICODE_CODE_POINT",
+            "text": text[:limit],
+            "truncated": len(text) > limit,
+            "release_basis": released["release_basis"],
+            "inference_mode": released.get("inference_mode"),
+        }
+
     # -------------------------------------------------------------- baselines
 
     BASELINE_TEXT_LIMIT = 4000

@@ -114,3 +114,15 @@ def test_precomputed_baseline_served_over_http(tmp_path):
         client.upload(smoke.INVOICE)
         data = client.request(f"/v1/baselines/extract_invoice/{digest}")
     assert data["precomputed"] is True and data["tool_calls"][0]["operation"] == "make_payment"
+
+
+@pytest.mark.isolation
+def test_released_values_resolve_to_their_source_spans_over_http(tmp_path):
+    with gateway("record", tmp_path, DeterministicInference()) as client:
+        _, scan, status, result = run_invoice(client)
+        assert status["decision"] == "ALLOW_UNDER_POLICY"
+        for name, field in result["result"]["output"]["fields"].items():
+            ref = field["source_refs"][0]
+            view = client.request(f"/v1/scans/{scan}/sources/{ref['resource_id']}/{ref['view_hash']}")
+            assert view["text"][ref["start"]:ref["end"]] == field["value"], name
+        client.request(f"/v1/scans/{scan}/sources/{ref['resource_id']}/{'f' * 64}", expected=404)
