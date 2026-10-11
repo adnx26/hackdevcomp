@@ -72,6 +72,8 @@ Folder scans support text files with `.txt`, `.md`, `.csv`, `.json`, `.log`, `.p
 
 A selection may contain up to 100 file entries, with at most 10 supported sources, 1 MiB per source, and 2 MiB of supported content in total. Selections exceeding the inspection budget are held instead of being silently split or partially approved. Extraction also remains subject to the gateway's existing text limits.
 
+For a smaller four-file check, select [`examples/folder-scan-test`](examples/folder-scan-test). Only `injected-message.txt` contains seeded hostile instructions; the other three files are ordinary fictional content.
+
 For a runnable nested-folder example, select [`examples/prompt-injection-test-repo`](examples/prompt-injection-test-repo). It contains 10 supported files, including three inert prompt-injection fixtures. Its README lists the expected suspicious paths and how to run the ordinary project.
 
 After uploading, the report displays a folder ID. An authenticated MCP client can call `inspect_folder` with that `folder_id`, then `get_folder_status` to retrieve the same per-file report. Local filesystem paths are not accepted by these tools: choose the folder in the browser first to authorize its files. Restart the gateway after updating and reconnect your MCP client so its tool list includes the two folder tools.
