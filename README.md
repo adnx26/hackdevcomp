@@ -300,10 +300,6 @@ This calls Kimi and uses API credits. It submits only the included synthetic inv
 
 For a complete pipeline description, test results, and repeatable browser steps, see [docs/testing.md](docs/testing.md).
 
-## Known issues
-
-- **Dummy "read" tools are not permitted under read-only tasks (to fix after the presentation).** The read-only task policies (`summarize_email`, `extract_invoice`) permit an operation named `read_selected` (`src/protection_gateway/contracts/policies.py`). The behavior tester's dummy tools are offered as `read_email` and `read_file` (`src/protection_gateway/runtime/core_bridge.py:74`). The collector checks each attempted tool against the task policy (`runtime/collector.py` → `core_bridge.py:272`), so a harmless read attempt in the sandbox is recorded as forbidden and would quarantine the scan. This fails closed (a possible false quarantine, never a false allow), and it did not occur in the recorded evaluation runs. Planned fix: map the read tools to `read_selected`, or add them to the read-only policies' permitted operations, with a test.
-
 ## Supported scope and limitations
 
 - Single-file uploads accept `.txt` and `.eml`; folder uploads also accept the text extensions listed above. Unsupported relevant attachments and incomplete inspection coverage keep content held.
