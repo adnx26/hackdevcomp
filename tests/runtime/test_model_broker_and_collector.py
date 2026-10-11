@@ -43,6 +43,18 @@ def request_for(grant, **extra):
             "signals": [], "history": [], "response_contract": {"required": ["checked_views", "findings"]}, "fake_confidential_data": {}, "tools": [], **extra}
 
 
+def test_provider_reason_reaches_scan_diagnostics_without_private_details(broker_runtime):
+    grant = grant_for(broker_runtime, 'test.inspector.ok')
+    def fail(*args, **kwargs):
+        raise RuntimeUnavailable('MODEL_PROVIDER_TLS_ERROR')
+    broker_runtime.transport.generate = fail
+    with pytest.raises(RuntimeUnavailable, match='MODEL_PROVIDER_TLS_ERROR'):
+        broker_runtime._http_model(grant.tokens['model'], request_for(grant))
+    assert broker_runtime.inspection_errors(grant.scan_id) == [{'role':'instruction', 'code':'MODEL_PROVIDER_TLS_ERROR'}]
+    assert broker_runtime.inspection_errors('another-scan') == []
+    assert 'PRIVATE-DOCUMENT-TEXT' not in json.dumps(list(broker_runtime.operations))
+
+
 def test_brokered_call_uses_only_the_approved_configuration(broker_runtime, caplog):
     grant = grant_for(broker_runtime, "test.inspector.ok")
     with caplog.at_level(logging.INFO):

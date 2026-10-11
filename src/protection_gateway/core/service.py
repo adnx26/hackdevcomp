@@ -69,7 +69,10 @@ def _dumps(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-class GatewayService:
+from .folders import FolderMixin, FOLDER_SCHEMA
+
+
+class GatewayService(FolderMixin):
     def __init__(
         self,
         config: GatewayConfig,
@@ -86,6 +89,7 @@ class GatewayService:
         self.clock = clock or SystemClock()
         self.ids = ids or RandomIds()
         self.db = db or Database(config.database_path)
+        self.db.execute(FOLDER_SCHEMA)
         self.store = EvidenceStore(config.evidence_root, permitted=config.storage_permitted(), cipher=cipher)
         from .actions import ActionGate, SimulatedMailboxExecutor
 
@@ -1805,6 +1809,7 @@ class GatewayService:
         """Expire evidence, metadata, tokens, sessions and pending approvals."""
         now = self._now()
         now_iso = iso(now)
+        self.purge_folders()
         counts = {"resources": 0, "scans_purged": 0, "metadata_deleted": 0}
         for row in self.db.query_all(
             "SELECT * FROM resources WHERE deleted_at IS NULL AND evidence_expires_at <= ?", (now_iso,)

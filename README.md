@@ -62,6 +62,24 @@ For a first successful invoice flow, upload `tests/fixtures/e2e/invoice.txt` and
 
 The complex fixture contains conflicting invoice values and several synthetic injection styles, including fake role labels, tool-call-shaped text, markup, encoded text, Unicode lookalikes, repetition, and a final-position instruction. Its secrets, companies, and destinations are fictional.
 
+## Scan a folder
+
+1. Sign in, then use **Scan a folder, including subfolders** and select a folder on your computer. Nested files are included with their relative paths.
+2. Select **Upload and scan folder**. The gateway inspects the supported files together against a read-only summary task.
+3. Read the folder report for each file's status and supporting evidence. A flagged file can appear before all checks finish; the report distinguishes completed inspections from pending checks. It also shows completed required checks and names a failed check, such as the task-result check, when full coverage cannot be confirmed.
+
+Folder scans support text files with `.txt`, `.md`, `.csv`, `.json`, `.log`, `.py`, `.js`, `.ts`, `.css`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, and `.eml` extensions. This checks document content for prompt injection; it is not an antivirus or executable malware scanner. PDFs, images, archives, and other unsupported files appear in the report as uninspected and prevent complete folder coverage. Empty directories have no files to inspect.
+
+A selection may contain up to 100 file entries, with at most 10 supported sources, 1 MiB per source, and 2 MiB of supported content in total. Selections exceeding the inspection budget are held instead of being silently split or partially approved. Extraction also remains subject to the gateway's existing text limits.
+
+For a runnable nested-folder example, select [`examples/prompt-injection-test-repo`](examples/prompt-injection-test-repo). It contains 10 supported files, including three inert prompt-injection fixtures. Its README lists the expected suspicious paths and how to run the ordinary project.
+
+After uploading, the report displays a folder ID. An authenticated MCP client can call `inspect_folder` with that `folder_id`, then `get_folder_status` to retrieve the same per-file report. Local filesystem paths are not accepted by these tools: choose the folder in the browser first to authorize its files. Restart the gateway after updating and reconnect your MCP client so its tool list includes the two folder tools.
+
+If model inspections fail, the folder report shows the provider error when available and keeps the files uninspected. On macOS, Python installations with an empty default trust store use `/etc/ssl/cert.pem` for Kimi HTTPS connections. Certificate and hostname verification remain enabled; an explicitly configured `SSL_CERT_FILE` or `SSL_CERT_DIR` is respected.
+
+Malformed model reports permit at most two fresh-report retries within the original inspection budget and deadline. Every replacement report must pass the same role, source-reference, full-view, and task-output validation. Persistent errors keep the scan incomplete; a previously flagged file remains flagged. Report repair does not repeat simulated tool actions.
+
 ## Run checks
 
 Run deterministic checks without live model calls or API charges:
@@ -87,7 +105,7 @@ For a complete pipeline description, test results, and repeatable browser steps,
 
 ## Supported scope and limitations
 
-- The local UI accepts `.txt` and `.eml` uploads. Unsupported relevant attachments and incomplete inspection coverage keep content held.
+- Single-file uploads accept `.txt` and `.eml`; folder uploads also accept the text extensions listed above. Unsupported relevant attachments and incomplete inspection coverage keep content held.
 - This gateway protects only the workflow routed through this application. Native chat uploads, pasted text, browsing, other connectors, and a native app’s final response are outside this local gateway’s enforcement.
 - `make run` enables loopback-only development mode and local private storage. It is not a production deployment configuration.
 - The simulated action flow records a dummy effect only. Real email sending, payments, and external actions are not enabled.

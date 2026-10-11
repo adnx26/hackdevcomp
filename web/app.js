@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const state = {csrf: null, resources: [], task: null, scan: null, status: null,
   action: null, actionRevision: 0, timer: null, expiryTimer: null, actionExpiryTimer: null,
-  generation: 0, delay: 1000, polling: false, busy: false};
+  folder: null, folderTimer: null, folderDelay: 1000, generation: 0, delay: 1000, polling: false, busy: false};
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const knownErrors = new Set(['UNAUTHENTICATED','FORBIDDEN','NOT_FOUND','INVALID_REQUEST',
@@ -143,6 +143,9 @@ function clearReleased() {
 }
 function invalidate() {
   ++state.generation;
+  clearTimeout(state.folderTimer);
+  state.folder = null;
+  if ($('folder-report')) $('folder-report').hidden = true;
   clearTimeout(state.timer);
   clearTimeout(state.expiryTimer);
   state.task = state.scan = state.status = null;
@@ -368,6 +371,129 @@ $('upload-form').addEventListener('submit', event => {
     notice('Resource stored privately. Select a task to inspect it.');
   });
 });
+// Relative names come from the browser's user-selected folder, never a server path.
+const folderTextExtensions = new Set(['txt','md','csv','json','log','py','js','ts','css','yaml','yml','xml','html','htm','eml']);
+function folderMedia(path) {
+  const name = path.split('/').pop();
+  if (name.lastIndexOf('.') <= 0) return null;
+  const extension = name.split('.').pop().toLowerCase();
+  if (!folderTextExtensions.has(extension)) return null;
+  return extension === 'eml' ? 'message/rfc822' : ['html','htm'].includes(extension) ? 'text/html' : 'text/plain';
+}
+function renderFolder(data) {
+  if (validId(data.folder_id) !== state.folder || !Array.isArray(data.files) || data.files.length > 100
+      || data.file_count !== data.files.length || typeof data.coverage_complete !== 'boolean') throw new Error('SERVICE_UNAVAILABLE');
+  $('folder-report').hidden = false;
+  const flagged = data.files.filter(file => file.status === 'FLAGGED').length;
+  const done = data.files.filter(file => file.inspection_complete === true).length;
+  const pending = data.files.some(file => file.status === 'PENDING');
+  const errors = new Set((data.inspection_errors || []).map(error => safeCode(error.code)));
+  const diagnosticInfo = {
+    MODEL_PROVIDER_TLS_ERROR:'The secure connection to the inspection provider failed.',
+    MODEL_PROVIDER_UNAUTHENTICATED:'The inspection provider rejected the API key.',
+    MODEL_PROVIDER_FORBIDDEN:'The inspection provider denied access.',
+    MODEL_PROVIDER_RATE_LIMITED:'The inspection provider reached a usage limit.',
+    MODEL_PROVIDER_REQUEST_REJECTED:'The inspection provider rejected the model request.',
+    MODEL_TIMEOUT:'The model inspection timed out.',
+    MODEL_RESPONSE_INCOMPLETE:'The model response ended before its inspection was complete.',
+    MODEL_RESPONSE_INVALID:'The model did not return a valid inspection report.',
+    BUDGET_EXHAUSTED:'The inspection reached its model budget.',
+    MODEL_REPORT_INVALID:'A model report had an invalid format after bounded retries.',
+    SOURCE_REFERENCE_INVALID:'A model report could not provide valid source references.',
+    MODEL_FINDINGS_INVALID:'A model report contained invalid finding categories or references.',
+    TASK_OUTPUT_INVALID:'The task-result check could not produce a valid source-backed result.',
+    SOURCE_QUOTE_NOT_UNIQUE:'The task-result check could not uniquely match a source quote.',
+    SOURCE_VALUE_MISMATCH:'The task-result check did not match the source value.',
+    MISSING_VIEWS:'A model report did not confirm inspection of every source view.',
+    DEADLINE_EXCEEDED:'An inspection reached its deadline.',
+    MODEL_BUDGET:'An inspection reached its call budget.',
+  };
+  $('folder-summary').textContent = `${done} / ${data.file_count} files inspected; ${flagged} flagged. ${data.coverage_complete ? 'Coverage complete for this uploaded snapshot.' : pending ? 'Inspection in progress or incomplete.' : 'Coverage incomplete: some files could not be inspected.'} ${data.collector_evidence?.length ? 'A forbidden dummy action was recorded for the combined set.' : ''}`;
+  if (Array.isArray(data.required_checks) && data.required_checks.length && Array.isArray(data.completed_checks)) {
+    $('folder-summary').textContent = `${data.completed_checks.length} / ${data.required_checks.length} required checks completed. ` + $('folder-summary').textContent;
+    const failed = Object.entries(data.inspection_statuses || {}).filter(([, status]) => ['ERROR','INCOMPLETE'].includes(status));
+    if (failed.length) $('folder-summary').textContent += ' Incomplete checks: ' + failed.map(([role]) => roleInfo[role] || 'Required inspection').join(', ') + '.';
+  }
+  if (errors.size) $('folder-summary').textContent += ' ' + [...errors].map(code => diagnosticInfo[code] || 'The inspection provider failed to return a report.').join(' ');
+  else if (data.reason_codes?.includes('INSPECTION_ERROR')) $('folder-summary').textContent += ' A required inspection failed; this is not a clean result.';
+  $('folder-reference').textContent = `Folder ID for MCP: ${data.folder_id}${data.scan_id ? ' · Scan: ' + validId(data.scan_id) : ''}`;
+  $('folder-files').replaceChildren();
+  for (const file of data.files) {
+    if (typeof file.path !== 'string' || file.path.length > 512 || !Array.isArray(file.finding_categories) || !Array.isArray(file.evidence_ids)) throw new Error('SERVICE_UNAVAILABLE');
+    const item = document.createElement('li');
+    const meanings = {FLAGGED:'Suspicious findings; review required', NO_FINDINGS:'Checks complete; no findings under this task', PENDING:'Waiting for checks', INCOMPLETE:'Checks incomplete', UNSUPPORTED_FORMAT:'Unsupported format; not scanned', LIMIT_EXCEEDED:'Over scan limits; not scanned', UPLOAD_FAILED:'Upload failed; not scanned'};
+    if (!meanings[file.status]) throw new Error('SERVICE_UNAVAILABLE');
+    item.textContent = `${file.path} — ${meanings[file.status]}${file.status === 'FLAGGED' && !file.inspection_complete ? ' (checks incomplete)' : ''}${file.finding_categories.length ? ': ' + file.finding_categories.map(safeCode).join(', ') : ''}`;
+    for (const evidenceId of file.evidence_ids.slice(0, 20)) {
+      validId(evidenceId);
+      const button = document.createElement('button'); button.className = 'secondary'; button.textContent = 'Review evidence';
+      button.addEventListener('click', () => viewEvidence(evidenceId, {title:'Folder finding', meaning:'An inspector flagged this file. This is an allegation with supporting source references.', role:'Folder inspector'}));
+      item.append(button);
+    }
+    $('folder-files').append(item);
+  }
+}
+async function pollFolder(generation) {
+  if (generation !== state.generation || !state.folder) return;
+  try {
+    const data = await api(`/v1/folders/${state.folder}`);
+    if (generation !== state.generation) return;
+    renderFolder(data);
+    if (!['QUEUED','EXTRACTING','INSPECTING'].includes(data.state)) return;
+    state.folderDelay = Math.min(Math.round(state.folderDelay * 1.5), 8000);
+    state.folderTimer = setTimeout(() => pollFolder(generation), state.folderDelay);
+  } catch (error) {
+    if (generation !== state.generation) return;
+    $('folder-summary').textContent = 'Folder status unavailable; coverage cannot be confirmed.';
+    fail(error);
+  }
+}
+$('folder-upload')?.addEventListener('change', invalidate);
+$('folder-form')?.addEventListener('submit', event => {
+  event.preventDefault();
+  exclusive($('folder-button'), async () => {
+    invalidate(); const generation = state.generation;
+    const files = [...$('folder-upload').files];
+    if (!files.length || files.length > 100) {
+      notice('Select a nonempty folder with at most 100 files. No files were uploaded.', true); return;
+    }
+    const supported = files.filter(file => folderMedia(file.webkitRelativePath || file.name));
+    const overBudget = supported.length > 10 || supported.reduce((sum, file) => sum + file.size, 0) > 2 * 1024 * 1024;
+    const entries = [];
+    for (const file of files) {
+      if (generation !== state.generation) return;
+      const path = file.webkitRelativePath || file.name;
+      if (!path || path.length > 512 || path.startsWith('/') || path.includes('\\') || path.includes(':') || /[\x00-\x1f\x7f]/.test(path) || path.split('/').some(part => ['', '.', '..'].includes(part))) throw new Error('INVALID_REQUEST');
+      const media = folderMedia(path);
+      const entry = {path, size_bytes:file.size, status:!media ? 'UNSUPPORTED_FORMAT' : overBudget || file.size > 1024 * 1024 ? 'LIMIT_EXCEEDED' : 'STORED'};
+      if (entry.status === 'STORED') {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let binary = '';
+        for (let start = 0; start < bytes.length; start += 16384) binary += String.fromCharCode(...bytes.subarray(start, start + 16384));
+        try {
+          const resource = await api('/v1/resources', {media_type:media, content_base64:btoa(binary)});
+          if (resource.storage_state !== 'STORED') throw new Error('SERVICE_UNAVAILABLE');
+          entry.resource_id = validId(resource.resource_id);
+        } catch (error) {
+          if (['UNAUTHENTICATED','FORBIDDEN','CONTEXT_CHANGED'].includes(error.message)) throw error;
+          entry.status = 'UPLOAD_FAILED';
+        }
+      }
+      entries.push(entry);
+      notice(`Preparing folder: ${entries.length} / ${files.length} files.`);
+    }
+    if (generation !== state.generation) return;
+    const folder = await api('/v1/folders', {entries});
+    if (generation !== state.generation) return;
+    state.folder = validId(folder.folder_id); state.folderDelay = 1000;
+    renderFolder(folder);
+    const started = await api(`/v1/folders/${state.folder}/inspect`, {});
+    if (generation !== state.generation) return;
+    renderFolder(started); $('folder-upload').value = '';
+    notice('Folder snapshot stored. Scanning supported files together; unscanned files remain listed.');
+    await pollFolder(generation);
+  });
+});
 $('policy').addEventListener('change', invalidate);
 $('scan-form').addEventListener('submit', event => {
   event.preventDefault();
@@ -487,6 +613,7 @@ async function connectSession() {
   state.csrf = session.csrf_token;
   $('identity').textContent = session.display_name || 'Authenticated session';
   $('upload-button').disabled = false;
+  if ($('folder-button')) $('folder-button').disabled = false;
   if ($('login-form')) $('login-form').hidden = true;
   notice('Session connected. Upload content to begin.');
 }

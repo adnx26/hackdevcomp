@@ -17,6 +17,8 @@
     <div class="workspace">
       <section class="panel"><p class="eyebrow">01 / SELECT CONTENT</p><h2>A task with a defined scope</h2>
         <form id="upload-form"><label for="upload">Email (.eml) or plain text (.txt)</label><input id="upload" type="file" accept=".eml,.txt,text/plain,message/rfc822" required><p class="hint">Up to 1 MiB per source, 10 sources and 2 MiB per task. Uploads go to restricted storage before inspection.</p><button id="upload-button" disabled>Upload to gateway</button></form>
+        <form id="folder-form"><label for="folder-upload">Scan a folder, including subfolders</label><input id="folder-upload" type="file" webkitdirectory multiple required><p class="hint">Select a folder you want inspected. Up to 100 file entries; scans support 10 text/email files, 1 MiB per file and 2 MiB total. Unsupported files and limits are listed, never silently treated as inspected. Empty directories are not included by the browser.</p><button id="folder-button" disabled>Upload and scan folder</button></form>
+        <section id="folder-report" hidden aria-live="polite"><h3>Folder inspection</h3><p id="folder-summary"></p><p id="folder-reference" class="hint"></p><ul id="folder-files"></ul></section>
         <fieldset id="resources"><legend>Select uploaded resources</legend><p class="hint" id="empty-resources">No resources uploaded in this session.</p></fieldset>
         <form id="scan-form"><label for="policy">Task policy</label><select id="policy"><option value="extract_invoice">Extract invoice fields</option><option value="summarize_email">Summarize email</option><option value="simulate_send">Simulate a confirmed email action</option></select><button id="scan-button" disabled>Start inspection</button></form>
       </section>

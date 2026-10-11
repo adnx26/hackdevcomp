@@ -4,11 +4,26 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import os
+import ssl
+import sys
 import urllib.request
 import urllib.error
 
 from .errors import RuntimeUnavailable
 from .model_broker import ModelConfig
+
+
+def _tls_context():
+    context = ssl.create_default_context()
+    # Python.org macOS installs can lack their optional cert.pem symlink.
+    # Use the OS trust bundle only when no explicit trust configuration exists.
+    if (sys.platform == 'darwin' and not context.get_ca_certs()
+            and not os.environ.get('SSL_CERT_FILE') and not os.environ.get('SSL_CERT_DIR')):
+        bundle = Path('/etc/ssl/cert.pem')
+        if bundle.is_file():
+            context.load_verify_locations(cafile=str(bundle))
+    return context
 
 
 class KimiTransport:
@@ -26,7 +41,8 @@ class KimiTransport:
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, *args, **kwargs):
                 return None
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(),
+                                                   urllib.request.HTTPSHandler(context=_tls_context()))
 
     def generate(self, config: ModelConfig, *, system: str, user: str, max_output_tokens: int, timeout: float) -> dict:
         payload = {"model": config.model, "max_tokens": max_output_tokens,
@@ -49,6 +65,9 @@ class KimiTransport:
             codes = {401: "MODEL_PROVIDER_UNAUTHENTICATED", 403: "MODEL_PROVIDER_FORBIDDEN",
                      429: "MODEL_PROVIDER_RATE_LIMITED", 400: "MODEL_PROVIDER_REQUEST_REJECTED"}
             raise RuntimeUnavailable(codes.get(error.code, "MODEL_PROVIDER_UNAVAILABLE")) from None
+        except urllib.error.URLError as error:
+            code = 'MODEL_PROVIDER_TLS_ERROR' if isinstance(error.reason, ssl.SSLCertVerificationError) else 'MODEL_PROVIDER_UNAVAILABLE'
+            raise RuntimeUnavailable(code) from None
         except (OSError, ValueError, KeyError, IndexError, TypeError):
             raise RuntimeUnavailable("MODEL_PROVIDER_UNAVAILABLE") from None
 
