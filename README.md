@@ -77,7 +77,6 @@ For a first successful invoice flow, upload `tests/fixtures/e2e/invoice.txt` and
 
 The complex fixture contains conflicting invoice values and several synthetic injection styles, including fake role labels, tool-call-shaped text, markup, encoded text, Unicode lookalikes, repetition, and a final-position instruction. Its secrets, companies, and destinations are fictional.
 
-<<<<<<< HEAD
 ## Offline demo with replay
 
 Replay mode lets the demo run without network access and with identical inspector responses on every run. It is development-only (`--dev`, which `make run` sets).
@@ -134,7 +133,6 @@ PG_REPLAY_DIR=demo/replay-cache PG_BASELINE_DIR=demo/baselines make run REPLAY=r
 `tests/integration/test_demo_replay.py` checks that this recording still reproduces both outcomes. Re-record with `PG_REPLAY_DIR=demo/replay-cache .venv/bin/python eval/redteam.py --scenario ap-policy-footer --baseline-dir demo/baselines`.
 
 Other evidence: `eval/redteam_results_round2.md` (10 realistic attacks, harmful action in 14 of 30 naive runs, none possible with the gateway) and `eval/transcripts/bec-paid-then-said-not-processed.md` (Kimi paid the attacker's IBAN, then told the user "Payment not processed").
-=======
 ## Scan a folder
 
 1. Sign in, then drag files or a folder into the large drop area, or use **Choose files** / **Choose a folder**. Nested files are included with their relative paths.
@@ -154,7 +152,6 @@ After uploading, the report displays a folder ID. An authenticated MCP client ca
 If model inspections fail, the folder report shows the provider error when available and keeps the files uninspected. On macOS, Python installations with an empty default trust store use `/etc/ssl/cert.pem` for Kimi HTTPS connections. Certificate and hostname verification remain enabled; an explicitly configured `SSL_CERT_FILE` or `SSL_CERT_DIR` is respected.
 
 Malformed model reports permit at most two fresh-report retries within the original inspection budget and deadline. Every replacement report must pass the same role, source-reference, full-view, and task-output validation. Persistent errors keep the scan incomplete; a previously flagged file remains flagged. Report repair does not repeat simulated tool actions.
->>>>>>> origin/codex/folder-scanning
 
 ## Run checks
 
