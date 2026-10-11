@@ -222,6 +222,20 @@ class InspectionTests(unittest.TestCase):
         self.assertEqual(result['inspection_status'], 'COMPLETE')
         self.assertEqual(result['task_output']['amount']['source_references'][0]['span'], [8, 13])
 
+    def test_invoice_normalization_rejected_and_quote_contract_matches_narrowing(self):
+        for value, quote in [('25', '25.00')]:
+            a, io = assignment('behavior', ('Amount: 25.00 USD',))
+            a['policy_id'] = 'extract_invoice'
+            response = {'checked_views': a['views'], 'findings': [], 'task_output': {
+                'amount': {'value': value, 'source_references': [dict(a['views'][0], quote=quote)]}}}
+            model = Model([response])
+            result = inspect(a, io, model, Collector())
+            self.assertEqual(result['reason_codes'], ['SOURCE_VALUE_MISMATCH'])
+            self.assertEqual(len(model.requests), 1)
+            contract = model.requests[0]['response_contract']
+            self.assertIn('worker narrows its span to the unchanged value', contract['instructions'])
+            self.assertNotIn('half-open span', contract['instructions'])
+
     def test_missing_ambiguous_or_forged_quote_cannot_complete(self):
         for quote, hash_value in [('absent', None), ('25.00', None), ('Amount', '0' * 64)]:
             a, io = assignment('instruction', ('Amount 25.00 and 25.00',))
