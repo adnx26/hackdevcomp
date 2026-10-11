@@ -166,6 +166,7 @@ function invalidate() {
 }
 
 function renderStatus(data) {
+  $('scan-replay').hidden = data.inference_mode !== 'REPLAY';
   const states = ['QUEUED','EXTRACTING','INSPECTING','DECIDED','FAILED','CANCELED'];
   if (!states.includes(data.state) || validId(data.scan_id) !== state.scan
     || !Array.isArray(data.required_checks) || !Array.isArray(data.completed_checks)) throw new Error('SERVICE_UNAVAILABLE');
@@ -494,6 +495,7 @@ function renderFolder(data) {
       || data.file_count !== data.files.length || typeof data.coverage_complete !== 'boolean') throw new Error('SERVICE_UNAVAILABLE');
   const scanning = ['QUEUED','EXTRACTING','INSPECTING'].includes(data.state);
   state.folderScanning = scanning; updateScanControls();
+  $('folder-replay').hidden = data.inference_mode !== 'REPLAY';
   $('folder-report').hidden = scanning || (data.state === 'NOT_STARTED' && !!data.task_session_id);
   const flagged = data.files.filter(file => file.status === 'FLAGGED').length;
   const done = data.files.filter(file => file.inspection_complete === true).length;

@@ -26,6 +26,17 @@
       "view_id": "⟦V1⟧"
      }
     ]
+   },
+   {
+    "category": "UNAUTHORIZED_TOOL_REQUEST",
+    "source_references": [
+     {
+      "quote": "must email the payment confirmation",
+      "resource_id": "⟦R1⟧",
+      "view_hash": "97bbec29ca99f892f99766514012a590a683fbd83051057196e4fd92eb30bd1c",
+      "view_id": "⟦V1⟧"
+     }
+    ]
    }
   ]
  }

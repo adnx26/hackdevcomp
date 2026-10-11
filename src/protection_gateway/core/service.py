@@ -684,9 +684,12 @@ class GatewayService(FolderMixin):
         now = self._now()
         deadline = parse_iso(scan["deadline_at"])
         resources = []
-        for ext in self.db.query_all(
-            "SELECT * FROM extractions WHERE scan_id = ? ORDER BY resource_id", (scan_id,)
-        ):
+        # Present documents in the task's own resource order (the user's or folder's order),
+        # not by random resource ID, so identical inputs produce identical assignments.
+        order = {rid: index for index, rid in enumerate(_loads(scan["resource_ids_json"]))}
+        extractions = sorted(self.db.query_all("SELECT * FROM extractions WHERE scan_id = ?", (scan_id,)),
+                             key=lambda e: order.get(e["resource_id"], len(order)))
+        for ext in extractions:
             original = self.db.query_one("SELECT original_hash FROM resources WHERE resource_id = ?", (ext["resource_id"],))
             resources.append(
                 {

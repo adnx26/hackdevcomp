@@ -130,3 +130,17 @@ class SpecAlignmentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DispatchOrderTests(unittest.TestCase):
+    def test_documents_follow_the_task_resource_order_not_random_ids(self):
+        h = Harness()
+        try:
+            p = h.api()
+            first, second = h.upload(p, "first file"), h.upload(p, "second file")  # IDs sort first < second
+            ts = h.session(p, [second["resource_id"], first["resource_id"]], "summarize_email")
+            scan_id = h.scan(p, ts["task_session_id"])["scan_id"]
+            assignment = h.runtime.latest(scan_id, "INSTRUCTION_INSPECTOR")
+            self.assertEqual([r["resource_id"] for r in assignment["resources"]], [second["resource_id"], first["resource_id"]])
+        finally:
+            h.close()

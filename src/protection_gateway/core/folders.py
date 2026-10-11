@@ -142,6 +142,7 @@ class FolderMixin:
                     (['UPLOAD_INCOMPLETE'] if any(e['status'] in {'UPLOAD_FAILED', 'LIMIT_EXCEEDED'} for e in results) else []))),
                 'collector_evidence': scan['collector_evidence'] if scan else [],
                 'inspection_errors': diagnostics(scan['scan_id']) if scan and callable(diagnostics) else [],
+                'inference_mode': scan.get('inference_mode') if scan else None,
                 'expires_at': folder['expires_at']}
 
     def purge_folders(self):
