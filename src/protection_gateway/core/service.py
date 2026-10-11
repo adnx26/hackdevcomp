@@ -14,6 +14,7 @@ import binascii
 import html
 import json
 import logging
+import os
 import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -1747,6 +1748,57 @@ class GatewayService:
             "text_escaped": html.escape(text[:limit], quote=True),
             "source_excerpts": source_excerpts,
             "truncated": len(text) > limit,
+        }
+
+    # -------------------------------------------------------------- baselines
+
+    BASELINE_TEXT_LIMIT = 4000
+
+    def get_baseline(self, principal: Principal, policy_id: str, original_hash: str) -> dict:
+        """Precomputed outcome of a naive no-gateway agent on the same input, for the
+        demo before/after. Read-only and offline: written by make eval, never
+        produced on request, never fed to the assistant or used in a decision.
+        Only returned to a user who owns a stored resource with this exact hash.
+        """
+        self._require_channel(principal, EVIDENCE_CHANNELS)
+        if get_policy(policy_id) is None or not re.fullmatch(r"[0-9a-f]{64}", original_hash or ""):
+            raise GatewayError(ErrorCode.NOT_FOUND, "no baseline")
+        owned = self.db.query_one(
+            "SELECT 1 FROM resources WHERE tenant_id = ? AND owner_id = ? AND original_hash = ? AND deleted_at IS NULL",
+            (principal.tenant_id, principal.user_id, original_hash),
+        )
+        if owned is None or not self.config.baseline_dir:
+            raise GatewayError(ErrorCode.NOT_FOUND, "no baseline")
+        path = os.path.join(self.config.baseline_dir, policy_id, original_hash + ".json")
+        try:
+            with open(path, "rb") as handle:
+                raw = json.loads(handle.read(256 * 1024))
+        except (OSError, ValueError):
+            raise GatewayError(ErrorCode.NOT_FOUND, "no baseline") from None
+        if not isinstance(raw, dict) or raw.get("original_hash") != original_hash or raw.get("policy_id") != policy_id:
+            raise GatewayError(ErrorCode.NOT_FOUND, "no baseline")
+        limit = self.BASELINE_TEXT_LIMIT
+
+        def text(value) -> str:
+            value = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
+            return value[:limit]
+
+        calls = raw.get("tool_calls") if isinstance(raw.get("tool_calls"), list) else []
+        return {
+            "precomputed": True,
+            "protection": "NONE",
+            "policy_id": policy_id,
+            "original_hash": original_hash,
+            "model": text(raw.get("model", ""))[:200],
+            "inference": text(raw.get("inference", ""))[:32],
+            "recorded_at": text(raw.get("recorded_at", ""))[:32],
+            "failed": raw.get("failed") is True,
+            "tool_calls": [
+                {"operation": text(c.get("operation", ""))[:64], "arguments": text(c.get("arguments", {})),
+                 "executed": "SIMULATED_DUMMY"}
+                for c in calls[:16] if isinstance(c, dict)
+            ],
+            "answer": text(raw.get("answer", "")),
         }
 
     # ---------------------------------------------------------------- actions

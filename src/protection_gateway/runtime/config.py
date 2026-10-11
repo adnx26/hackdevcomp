@@ -37,6 +37,8 @@ class RuntimeConfig:
     # Development only: "record" caches live replies, "replay" serves them offline.
     model_replay: str | None = None
     replay_dir: Path = field(default_factory=lambda: REPO_ROOT / "var" / "replay-cache")
+    # Precomputed no-gateway baselines written by make eval; served read-only by the core.
+    baseline_dir: Path = field(default_factory=lambda: REPO_ROOT / "var" / "baselines")
     dev_mode: bool = False
     login_token_file: Path | None = None
     collector_key_file: Path | None = None
@@ -81,6 +83,7 @@ class RuntimeConfig:
             model_api_key=env.get("KIMI_API_KEY") if provider == "kimi" else None,
             model_replay=replay,
             replay_dir=path("PG_REPLAY_DIR") or REPO_ROOT / "var" / "replay-cache",
+            baseline_dir=path("PG_BASELINE_DIR") or REPO_ROOT / "var" / "baselines",
             dev_mode=env.get("PG_DEV_MODE") == "1",
             login_token_file=path("PG_LOGIN_TOKEN_FILE"),
             collector_key_file=path("PG_COLLECTOR_KEY_FILE"),

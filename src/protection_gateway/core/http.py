@@ -74,6 +74,7 @@ class GatewayApp:
             ("POST", re.compile(rf"^/v1/actions/{_ID}/execute$"),
              lambda p, b, m, e: s.execute_simulated_action(p, m[0], b, e.get(IDEMPOTENCY_HEADER)), 200),
             ("GET", re.compile(rf"^/v1/evidence/{_ID}$"), lambda p, b, m, e: s.get_evidence(p, m[0]), 200),
+            ("GET", re.compile(r"^/v1/baselines/([a-z_]{1,32})/([0-9a-f]{64})$"), lambda p, b, m, e: s.get_baseline(p, m[0], m[1]), 200),
         ]
 
     @staticmethod

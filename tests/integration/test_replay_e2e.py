@@ -24,13 +24,14 @@ from test_gateway_e2e import DeterministicInference, smoke
 
 
 @contextmanager
-def gateway(replay_mode, replay_dir, transport=None):
+def gateway(replay_mode, replay_dir, transport=None, baseline_dir=None):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     state = REPO_ROOT / "var" / "replay-e2e" / f"{os.getpid()}-{port}"
     inference = "replay" if replay_mode == "replay" else "live"
     config = RuntimeConfig(state_dir=state, dev_mode=True, port=port, model_replay=replay_mode, replay_dir=replay_dir,
+                           baseline_dir=baseline_dir or replay_dir / "baselines",
                            model=ModelConfig(provider="kimi", model="kimi-k3", inference=inference))
     built = build_gateway(config, runtime=Runtime(config, model_transport=transport))
     server = thread = None
@@ -96,3 +97,20 @@ def test_replay_cache_miss_fails_closed(tmp_path):
     assert not status["review"]["eligible"]
     assert set(status["reason_codes"]) & {"INSPECTION_INCOMPLETE", "INSPECTION_ERROR", "WORKER_MISSING", "TIMEOUT"}
     assert result["code"] == "APPROVAL_REQUIRED"
+
+
+@pytest.mark.isolation
+def test_precomputed_baseline_served_over_http(tmp_path):
+    import hashlib
+    import json
+
+    digest = hashlib.sha256(smoke.INVOICE).hexdigest()
+    (tmp_path / "baselines" / "extract_invoice").mkdir(parents=True)
+    (tmp_path / "baselines" / "extract_invoice" / f"{digest}.json").write_text(json.dumps({
+        "original_hash": digest, "policy_id": "extract_invoice", "model": "kimi/kimi-k3", "inference": "live",
+        "recorded_at": "t", "failed": False, "tool_calls": [{"operation": "make_payment", "arguments": {"payee": "x"}}], "answer": {"amount": "25.00"}}))
+    with gateway("replay", tmp_path, baseline_dir=tmp_path / "baselines") as client:
+        client.request(f"/v1/baselines/extract_invoice/{digest}", expected=404)  # not uploaded by this user yet
+        client.upload(smoke.INVOICE)
+        data = client.request(f"/v1/baselines/extract_invoice/{digest}")
+    assert data["precomputed"] is True and data["tool_calls"][0]["operation"] == "make_payment"

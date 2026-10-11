@@ -233,6 +233,8 @@ function clearReleased() {
   discardAction();
 }
 function invalidate() {
+  $('baseline-panel').hidden = true; $('baseline-body').replaceChildren(); $('compare-button').disabled = true;
+  $('agents-panel').hidden = true;
   ++state.generation;
   clearTimeout(state.timer);
   clearTimeout(state.expiryTimer);
@@ -463,7 +465,7 @@ $('upload-form').addEventListener('submit', event => {
     const data = await api('/v1/resources', {media_type: /\.eml$/i.test(file.name) ? 'message/rfc822' : 'text/plain', content_base64: btoa(binary)});
     if (data.storage_state !== 'STORED') throw new Error('SERVICE_UNAVAILABLE');
     const resourceId = validId(data.resource_id);
-    state.resources.push({id: resourceId, size: file.size});
+    state.resources.push({id: resourceId, size: file.size, hash: digestPattern.test(data.original_hash) ? data.original_hash : null});
     $('empty-resources').hidden = true;
     const label = document.createElement('label'), checkbox = document.createElement('input');
     checkbox.type = 'checkbox'; checkbox.value = resourceId; checkbox.checked = true;
@@ -485,6 +487,8 @@ $('scan-form').addEventListener('submit', event => {
     const task = await api('/v1/task-sessions', {policy_id: $('policy').value, resource_ids: resourceIds});
     if (generation !== state.generation) return;
     state.task = validId(task.task_session_id);
+    state.scanPolicy = $('policy').value; state.scanResources = resourceIds;
+    $('compare-button').disabled = resourceIds.length !== 1;
     const scan = await api('/v1/scans', {task_session_id: state.task}, crypto.randomUUID());
     if (generation !== state.generation) return;
     state.scan = validId(scan.scan_id); state.delay = 1000;
@@ -520,6 +524,33 @@ $('result-button').addEventListener('click', () => exclusive($('result-button'),
   if (generation !== state.generation || !canReadResult()) return;
   $('result-replay-banner').hidden = data.inference_mode !== 'REPLAY';
   renderText('result', data); $('result-panel').hidden = false;
+}));
+function renderBaseline(data) {
+  const body = $('baseline-body');
+  body.replaceChildren();
+  if (!data) {
+    body.append(element('p', 'No recorded baseline for this input and task. Run make eval to record baselines for the demo inputs.', 'hint'));
+    return;
+  }
+  body.append(element('p', `Model ${String(data.model).slice(0, 80)} · ${String(data.inference).slice(0, 32)} · recorded ${String(data.recorded_at).slice(0, 32)}`, 'hint'));
+  if (data.failed) { body.append(element('p', 'The naive agent run failed for this input, so there is no baseline outcome.', 'hint')); return; }
+  const calls = Array.isArray(data.tool_calls) ? data.tool_calls.slice(0, 16) : [];
+  body.append(element('h3', calls.length ? 'Tools it executed immediately (simulated)' : 'Tools it executed'));
+  const list = element('ul', undefined, 'flag-list');
+  for (const call of calls) list.append(element('li', `${String(call.operation).slice(0, 64)} ${String(call.arguments).slice(0, 300)}`, 'forbidden'));
+  if (!calls.length) list.append(element('li', 'None', 'hint'));
+  body.append(list, element('h3', 'What it answered'), element('pre', String(data.answer ?? '').slice(0, 4000)));
+}
+$('compare-button').addEventListener('click', () => exclusive($('compare-button'), async () => {
+  const resources = state.scanResources || [];
+  const resource = state.resources.find(r => r.id === resources[0]);
+  if (resources.length !== 1 || !resource?.hash || !/^[a-z_]{1,32}$/.test(state.scanPolicy || '')) throw new Error('INVALID_REQUEST');
+  const generation = state.generation;
+  let data = null;
+  try { data = await api(`/v1/baselines/${state.scanPolicy}/${resource.hash}`); }
+  catch (error) { if (error.message !== 'NOT_FOUND') throw error; }
+  if (generation !== state.generation) return;
+  renderBaseline(data); $('baseline-panel').hidden = false;
 }));
 $('chat-button').addEventListener('click', () => exclusive($('chat-button'), async () => {
   const generation = state.generation;

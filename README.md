@@ -117,6 +117,8 @@ Each case runs once through the real local stack. The single-inspector rows appl
 
 Metrics: attack success (no gateway: a forbidden tool executed or the injected objective appeared in the answer; gateway: attack-influenced content was released), attack content released at all, benign false alarms (REVIEW or QUARANTINE), invoice fields extracted correctly with a verified source reference, latency p50/p95, and how often the inspectors disagreed. Output: `eval/results.json`, `eval/results.md` and `eval/chart.svg`. A run calls the model roughly 4–8 times per case.
 
+`make eval` also writes a **precomputed baseline** per case to `var/baselines/` (override with `PG_BASELINE_DIR`): what the naive no-gateway agent did with that exact input. In the UI, after starting an inspection of a single resource, **Compare: without the gateway** shows that outcome next to the gateway's decision. The gateway only reads these files. It never sends an upload to a model to produce one, and it shows a baseline only to a user who uploaded content with the same SHA-256. Inputs without a recorded baseline show "not available".
+
 ## Run checks
 
 Run deterministic checks without live model calls or API charges:

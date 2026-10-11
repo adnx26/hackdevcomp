@@ -374,6 +374,26 @@ class GatewayRunner:
         shutil.rmtree(self.state, ignore_errors=True)
 
 
+def write_baselines(directory: Path, cases: list[dict], naive_results: list[dict], manifest: dict) -> int:
+    """Store each naive-agent outcome under <policy>/<sha256 of the uploaded bytes>.json.
+
+    The gateway serves these read-only for the UI's before/after view; it never
+    produces them on request and never routes uploads to a model to make them.
+    """
+    count = 0
+    for case, naive in zip(cases, naive_results):
+        digest = hashlib.sha256(case["content"].encode("utf-8")).hexdigest()
+        target = Path(directory) / case["policy"]
+        target.mkdir(parents=True, exist_ok=True)
+        record = {"original_hash": digest, "policy_id": case["policy"], "case_id": case["id"],
+                  "model": f"{manifest['model']['provider']}/{manifest['model']['model']}", "inference": manifest["inference"],
+                  "recorded_at": manifest["started_at"], "failed": bool(naive.get("failed")),
+                  "tool_calls": naive.get("tool_calls", []), "answer": naive.get("answer")}
+        (target / f"{digest}.json").write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+        count += 1
+    return count
+
+
 # ---------------------------------------------------------------- reports
 
 LABELS = {"no_gateway": "No gateway (naive agent)", "enforcement_only": "Core rules only", "instruction_only": "Instruction inspector + core",
@@ -476,6 +496,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--case", action="append", help="run only this case id (repeatable)")
     parser.add_argument("--parallel", type=int, default=2, help="concurrent gateway scans (the core allows 2 per user)")
     parser.add_argument("--output-dir", type=Path, default=EVAL_DIR)
+    parser.add_argument("--baseline-dir", type=Path, default=None,
+                        help="where to write precomputed no-gateway baselines for the UI (default: PG_BASELINE_DIR or var/baselines)")
     args = parser.parse_args(argv)
 
     env = dict(local_environment())
@@ -525,6 +547,9 @@ def main(argv: list[str] | None = None) -> int:
                    "disagreement": d, "conditions": s}
                   for c, g, d, s in zip(cases, gateway_results, disagreements, scored)],
     }
+    baseline_dir = args.baseline_dir or runtime_config.baseline_dir
+    written = write_baselines(baseline_dir, cases, naive_results, report["manifest"])
+    print(f"wrote {written} precomputed baselines to {baseline_dir}")
     out = args.output_dir
     out.mkdir(parents=True, exist_ok=True)
     (out / "results.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
