@@ -47,7 +47,9 @@ from .auth import Principal
 from .clock import Clock, IdFactory, RandomIds, SystemClock, after, iso, parse_iso
 from .config import GatewayConfig
 from .db import Database
-from .decisions import DecisionInputs, DecisionOutcome, RoleResult, decide, review_exception_eligible
+from .decisions import (
+    DecisionInputs, DecisionOutcome, RoleResult, decide, decision_trace, disagreement_summary, review_exception_eligible,
+)
 from .runtime_api import ActionExecutor, RuntimeCallbacks
 from .storage import Cipher, EvidenceStore
 
@@ -1240,6 +1242,64 @@ class GatewayService:
         ]
         return completed
 
+    def _inspector_summary(self, scan) -> list[dict]:
+        """Per required inspector: status, verdict, flags and the views it examined.
+
+        Public-safe: IDs, enums and extractor view kinds only. A COMPLETE result
+        has, by the core's acceptance rule, checked every assigned view.
+        """
+        scan_id = scan["scan_id"]
+        results = {r["role"]: r for r in self.db.query_all("SELECT * FROM worker_results WHERE scan_id = ?", (scan_id,))}
+        kinds = {
+            (e["resource_id"], v["view_id"]): v.get("kind")
+            for e in self.db.query_all("SELECT resource_id, views_json FROM extractions WHERE scan_id = ?", (scan_id,))
+            for v in _loads(e["views_json"], [])
+        }
+        events = self.db.query_all(
+            "SELECT operation, effective_policy_check, evidence_id FROM collector_events WHERE scan_id = ? ORDER BY sequence", (scan_id,)
+        )
+        active = scan["state"] in {s.value for s in ACTIVE_JOB_STATES}
+        summary = []
+        for role in self._required_roles(scan):
+            assignment = self.db.query_one(
+                "SELECT assignment_json, state FROM assignments WHERE scan_id = ? AND role = ? AND kind = 'INSPECTION' ORDER BY attempt DESC LIMIT 1",
+                (scan_id, role),
+            )
+            # Work canceled because the scan ended early (quarantine, cancel, gateway failure) is not an
+            # inspector failure. A deadline also cancels outstanding work, but that is a timeout: FAILED.
+            ended_early = scan["decision"] == Decision.QUARANTINE.value or scan["state"] in (JobState.CANCELED.value, JobState.FAILED.value)
+            stopped = ended_early and assignment is not None and assignment["state"] == "CANCELED"
+            assigned = [
+                {"resource_id": res["resource_id"], "view_id": v["view_id"], "kind": kinds.get((res["resource_id"], v["view_id"]))}
+                for res in (_loads(assignment["assignment_json"])["resources"] if assignment else [])
+                for v in res["views"]
+            ]
+            row = results.get(role)
+            findings = _loads(row["findings_json"], []) if row else []
+            entry = {
+                "role": role,
+                "status": row["inspection_status"] if row else ("PENDING" if active else "STOPPED" if stopped else "MISSING"),
+                "flags": sorted({f["category"] for f in findings}),
+                "evidence_ids": sorted({e for f in findings for e in f["evidence_ids"]}),
+                "views_examined": assigned if row and row["inspection_status"] == InspectionStatus.COMPLETE.value else [],
+                "views_assigned": assigned,
+            }
+            if role == WorkerRole.BEHAVIOR_TESTER.value:
+                entry["tool_attempts"] = [{"operation": e["operation"], "policy_check": e["effective_policy_check"],
+                                           "evidence_id": e["evidence_id"]} for e in events]
+            forbidden = role == WorkerRole.BEHAVIOR_TESTER.value and any(
+                e["effective_policy_check"] == PolicyCheck.FORBIDDEN.value for e in events)
+            if row is None:
+                entry["verdict"] = "PENDING" if active else "STOPPED" if stopped else "FAILED"
+            elif row["inspection_status"] != InspectionStatus.COMPLETE.value:
+                entry["verdict"] = "FAILED"
+            else:
+                entry["verdict"] = "FLAGGED" if entry["flags"] or forbidden else "CLEAN"
+            if forbidden and row is None:
+                entry["verdict"] = "FLAGGED"  # authoritative collector evidence exists even without a result
+            summary.append(entry)
+        return summary
+
     def _decision_record(self, conn, scan, decision: str) -> dict:
         """Durable decision record (master section 10): policy version,
         completed checks, decision and the evidence IDs it rests on."""
@@ -1250,12 +1310,17 @@ class GatewayService:
                 "SELECT evidence_id FROM collector_events WHERE scan_id = ? AND effective_policy_check = ?",
                 (scan["scan_id"], PolicyCheck.FORBIDDEN.value))}
         )
+        disagreement = disagreement_summary({i["role"]: i["verdict"] for i in self._inspector_summary(scan)})
+        # Per-run disagreement metric: IDs and counts only.
+        log.info("scan_disagreement scan_id=%s disagree=%d flagged=%d clean=%d failed=%d", scan["scan_id"],
+                 disagreement["disagree"], disagreement["flagged"], disagreement["clean"], disagreement["failed"])
         return {
             "policy_id": scan["policy_id"],
             "policy_version": scan["policy_version"],
             "decision": decision,
             "completed_checks": self._completed_checks(conn, scan),
             "evidence_ids": evidence_ids,
+            "disagreement": disagreement,
         }
 
     def _build_output(self, scan) -> tuple[str, str, list[str]] | None:
@@ -1435,6 +1500,10 @@ class GatewayService:
         exception = eligible and output and self._active_exception(scan, principal.user_id, output['output_digest'])
         status['review_exception'] = {'active': bool(exception), **({'expires_at': exception['expires_at']} if exception else {})}
         status['inference_mode'] = self._inference_mode(scan)
+        inspectors = self._inspector_summary(scan)
+        status['inspectors'] = inspectors
+        status['disagreement'] = disagreement_summary({i['role']: i['verdict'] for i in inspectors})
+        status['decision_trace'] = decision_trace(scan['state'], scan['decision'], reasons)
         return status
 
     def _inference_mode(self, scan) -> str:

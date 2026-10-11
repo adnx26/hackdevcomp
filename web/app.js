@@ -41,6 +41,96 @@ const roleInfo = {
   DATA_TOOL_INSPECTOR: 'Data and action check',
   BEHAVIOR_TESTER: 'Task result check',
 };
+const verdictInfo = {
+  FLAGGED: 'Flagged', CLEAN: 'Found nothing', FAILED: 'Failed or missing',
+  STOPPED: 'Stopped early (scan ended)', PENDING: 'Running',
+};
+const ruleInfo = {
+  collector_forbidden_action: 'Forbidden tool attempt recorded by the gateway collector',
+  extraction_coverage: 'All task-relevant content extracted',
+  inspection_completeness: 'Every required inspection completed',
+  uncorroborated_suspicion: 'No unresolved suspicion',
+  answer_integrity: 'Result matches its cited source',
+  all_checks_passed: 'All checks passed',
+  terminated: 'Scan ended before a decision',
+};
+const decisionNames = {ALLOW_UNDER_POLICY: 'Allow under policy', REVIEW: 'Review', QUARANTINE: 'Quarantine'};
+
+function element(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = String(text);
+  if (className) node.className = className;
+  return node;
+}
+
+function renderAgents(data) {
+  const inspectors = Array.isArray(data.inspectors) ? data.inspectors.slice(0, 8) : [];
+  $('agents-panel').hidden = inspectors.length === 0;
+  $('inspector-cards').replaceChildren();
+  $('decision-trace').replaceChildren();
+  if (!inspectors.length) return;
+  const verdicts = inspectors.map(i => safeCode(i.verdict));
+  const reached = verdicts.filter(v => !['PENDING', 'STOPPED'].includes(v));
+  const disagree = data.disagreement?.disagree === true;
+  const banner = $('disagreement-banner');
+  banner.dataset.disagree = String(disagree);
+  if (disagree) {
+    const parts = inspectors.filter(i => !['PENDING', 'STOPPED'].includes(i.verdict))
+      .map(i => `${roleInfo[i.role] || readableName(i.role)}: ${(verdictInfo[i.verdict] || readableName(i.verdict)).toLowerCase()}`);
+    banner.textContent = `Inspectors disagree — ${parts.join('; ')}. The gateway does not take a vote; the rule marked below decided.`;
+  } else {
+    banner.textContent = reached.length ? 'Inspectors agree.' : 'Waiting for inspector results.';
+  }
+  const majority = reached.length ? reached.sort((a, b) => reached.filter(v => v === b).length - reached.filter(v => v === a).length)[0] : null;
+  for (const inspector of inspectors) {
+    const verdict = safeCode(inspector.verdict);
+    const card = element('article', undefined, 'inspector-card');
+    card.dataset.verdict = verdict;
+    if (disagree && majority && verdict !== majority && !['PENDING', 'STOPPED'].includes(verdict)) card.dataset.outlier = 'true';
+    card.append(element('h4', roleInfo[inspector.role] || readableName(inspector.role)),
+      element('p', verdictInfo[verdict] || readableName(verdict), 'verdict'),
+      element('p', `Status: ${readableName(safeCode(inspector.status))}`, 'hint'));
+    const flags = (inspector.flags || []).slice(0, 16).map(safeCode);
+    const flagList = element('ul', undefined, 'flag-list');
+    for (const flag of flags) flagList.append(element('li', (findingInfo[flag] || [readableName(flag)])[0]));
+    if (!flags.length) flagList.append(element('li', 'No flags', 'hint'));
+    card.append(element('p', 'Flags', 'label'), flagList);
+    const examined = (inspector.views_examined || []).slice(0, 16);
+    const assigned = (inspector.views_assigned || []).slice(0, 16);
+    const views = examined.length ? examined : assigned;
+    card.append(element('p', examined.length ? 'Views examined' : 'Views assigned (not confirmed)', 'label'),
+      element('p', views.map(v => readableName(safeCode(String(v.kind || 'view').toUpperCase()))).join(', ') || 'None', 'hint'));
+    const attempts = (inspector.tool_attempts || []).slice(0, 16);
+    if (attempts.length) {
+      const list = element('ul', undefined, 'flag-list');
+      for (const attempt of attempts) {
+        const item = element('li', `${readableName(safeCode(String(attempt.operation || '').toUpperCase()))}: ${safeCode(attempt.policy_check) === 'FORBIDDEN' ? 'blocked (forbidden)' : 'allowed (dummy)'}`);
+        if (safeCode(attempt.policy_check) === 'FORBIDDEN') item.className = 'forbidden';
+        list.append(item);
+      }
+      card.append(element('p', 'Sandbox tool attempts (gateway collector)', 'label'), list);
+    }
+    $('inspector-cards').append(card);
+  }
+  const trace = data.decision_trace;
+  if (!trace || typeof trace !== 'object') {
+    $('decision-trace').append(element('li', 'No decision yet. The core decides only after every required check finishes or the deadline passes.', 'hint'));
+    return;
+  }
+  const deciding = typeof trace.deciding_rule === 'string' ? trace.deciding_rule : '';
+  const rules = Array.isArray(trace.rules) && trace.rules.length ? trace.rules.slice(0, 12) : [{rule: deciding, fired: true, description: trace.description}];
+  for (const rule of rules) {
+    const id = typeof rule.rule === 'string' ? rule.rule : '';
+    const item = element('li');
+    item.dataset.fired = String(rule.fired === true);
+    if (id === deciding) item.dataset.deciding = 'true';
+    const outcome = decisionNames[rule.outcome] ? ` → ${decisionNames[rule.outcome]}` : '';
+    item.append(element('strong', `${rule.fired === true ? 'Fired' : 'Not fired'} · ${ruleInfo[id] || readableName(id)}${outcome}`));
+    if (id === deciding) item.append(element('span', 'Decided by this rule', 'deciding-tag'));
+    item.append(element('p', String(rule.description || '').slice(0, 400), 'hint'));
+    $('decision-trace').append(item);
+  }
+}
 function readableName(value) {
   return String(value || '').toLowerCase().split('_').map(part => part ? part[0].toUpperCase() + part.slice(1) : '').join(' ');
 }
@@ -177,6 +267,7 @@ function renderStatus(data) {
     data.evidence_ids = [...new Set([...(data.findings || []).flatMap(f => f.evidence_ids), ...(data.collector_evidence || []).map(e => e.evidence_id)])];
   }
   state.status = data;
+  renderAgents(data);
   // Replayed runs are always labeled; anything other than LIVE is shown as such.
   const inference = ['LIVE', 'REPLAY'].includes(data.inference_mode) ? data.inference_mode : 'UNKNOWN';
   $('replay-banner').hidden = inference !== 'REPLAY';

@@ -27,8 +27,68 @@
       "deadline_at": "2026-10-10T12:01:00Z",
       "decision": null,
       "decision_expires_at": null,
+      "decision_trace": null,
+      "disagreement": {
+        "clean": 0,
+        "disagree": false,
+        "failed": 0,
+        "flagged": 0,
+        "verdicts": {
+          "BEHAVIOR_TESTER": "PENDING",
+          "DATA_TOOL_INSPECTOR": "PENDING",
+          "INSTRUCTION_INSPECTOR": "PENDING"
+        }
+      },
       "findings": [],
       "inference_mode": "LIVE",
+      "inspectors": [
+        {
+          "evidence_ids": [],
+          "flags": [],
+          "role": "INSTRUCTION_INSPECTOR",
+          "status": "PENDING",
+          "verdict": "PENDING",
+          "views_assigned": [
+            {
+              "kind": "plain_text",
+              "resource_id": "res_0001",
+              "view_id": "visible"
+            }
+          ],
+          "views_examined": []
+        },
+        {
+          "evidence_ids": [],
+          "flags": [],
+          "role": "DATA_TOOL_INSPECTOR",
+          "status": "PENDING",
+          "verdict": "PENDING",
+          "views_assigned": [
+            {
+              "kind": "plain_text",
+              "resource_id": "res_0001",
+              "view_id": "visible"
+            }
+          ],
+          "views_examined": []
+        },
+        {
+          "evidence_ids": [],
+          "flags": [],
+          "role": "BEHAVIOR_TESTER",
+          "status": "PENDING",
+          "tool_attempts": [],
+          "verdict": "PENDING",
+          "views_assigned": [
+            {
+              "kind": "plain_text",
+              "resource_id": "res_0001",
+              "view_id": "visible"
+            }
+          ],
+          "views_examined": []
+        }
+      ],
       "policy_id": "extract_invoice",
       "reason_codes": [],
       "required_checks": [
