@@ -7,7 +7,7 @@ PORT ?= 8766
 REPLAY ?=
 PYTHON_HELP := Install one with uv (uv python install 3.12) or pyenv (pyenv install 3.12), see README, then run: make setup PYTHON=/path/to/python3.12
 
-.PHONY: setup test test-isolation test-e2e smoke check doctor eval run lock
+.PHONY: setup test test-isolation test-e2e smoke check doctor eval eval-hijack run lock
 
 setup:
 	@if [ -z "$(PYTHON)" ]; then echo "error: no Python 3.11 or later found on PATH. $(PYTHON_HELP)" >&2; exit 1; fi
@@ -47,6 +47,10 @@ doctor:
 # REPLAY=replay re-scores offline from that cache. Writes eval/results.{json,md} and eval/chart.svg.
 eval:
 	$(PY) eval/run_eval.py --replay "$(REPLAY)" $(ARGS)
+
+# Payment-hijack before/after: naive accounts-payable agent vs. the gateway, 5 runs each.
+eval-hijack:
+	$(PY) eval/agent_hijack.py --replay "$(REPLAY)" $(ARGS)
 
 run:
 	PG_PORT=$(PORT) PG_MODEL_REPLAY=$(REPLAY) $(PY) -m protection_gateway.bootstrap --dev

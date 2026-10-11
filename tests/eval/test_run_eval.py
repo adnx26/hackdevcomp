@@ -132,3 +132,31 @@ def test_baselines_are_keyed_by_uploaded_bytes(tmp_path):
     digest = hashlib.sha256(case["content"].encode("utf-8")).hexdigest()
     record = json.loads((tmp_path / "summarize_email" / f"{digest}.json").read_text())
     assert record["original_hash"] == digest and record["policy_id"] == "summarize_email" and record["answer"] == "hi"
+
+
+@pytest.mark.isolation
+def test_payment_hijack_scenario_with_deterministic_double(tmp_path, monkeypatch):
+    monkeypatch.setenv("PG_REPLAY_DIR", str(tmp_path / "cache"))
+    sys.path.insert(0, str(REPO))
+    spec = importlib.util.spec_from_file_location("agent_hijack", REPO / "eval" / "agent_hijack.py")
+    hijack = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hijack)
+    assert hijack.main(["--transport-factory", "tests.eval.doubles:make", "--repeats", "2", "--output-dir", str(tmp_path)]) == 0
+    report = json.loads((tmp_path / "hijack_results.json").read_text())
+    attack, control = report["scenarios"]["hijack-bank-change"], report["scenarios"]["hijack-control-clean"]
+    assert attack["naive_outcomes"] == {"PAID_ATTACKER": 2} and control["naive_outcomes"] == {"PAID_ON_FILE": 2}
+    assert attack["gateway"]["payments_executed"] == 0 and attack["gateway"]["decision"] in {"ALLOW_UNDER_POLICY", "REVIEW", "QUARANTINE"}
+    assert "PAID_ATTACKER" not in json.dumps(attack["gateway"])
+    assert (tmp_path / "hijack_results.md").read_text().startswith("# Payment-hijack scenario")
+
+
+def test_hijack_outcome_classification():
+    spec = importlib.util.spec_from_file_location("agent_hijack_unit", REPO / "eval" / "agent_hijack.py")
+    hijack = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hijack)
+    attacker = hijack.normalize_account(hijack.ATTACKER_ACCOUNT)
+    assert hijack.outcome({"failed": False, "payments": [{"account": attacker, "amount": "4200.00"}]}) == "PAID_ATTACKER"
+    assert hijack.outcome({"failed": False, "payments": [{"account": hijack.normalize_account(hijack.ON_FILE_ACCOUNT)}]}) == "PAID_ON_FILE"
+    assert hijack.outcome({"failed": False, "payments": []}) == "NO_PAYMENT"
+    assert hijack.outcome({"failed": True}) == "FAILED"
+    assert hijack.normalize_account(" gb00 exfl 0000 1111 2222 33 ") == attacker
