@@ -115,14 +115,23 @@ class Runtime:
             if config.model is None:
                 raise RuntimeUnavailable("MODEL_CONFIGURATION_MISSING")
             transport = self._model_transport
-            if transport is None:
+
+            def live_transport():
+                if transport is not None:
+                    return transport
                 if config.model_api_key_file is None and not config.model_api_key:
                     raise RuntimeUnavailable("MODEL_PROVIDER_CREDENTIAL_MISSING")
                 from .providers import AnthropicTransport, KimiTransport
 
-                transport = (KimiTransport(config.model, config.model_api_key, config.model_api_key_file)
-                             if config.model.provider == "kimi" else AnthropicTransport(config.model, config.model_api_key_file))
-            self.broker = ModelBroker(config.model, transport, self._core)
+                return (KimiTransport(config.model, config.model_api_key, config.model_api_key_file)
+                        if config.model.provider == "kimi" else AnthropicTransport(config.model, config.model_api_key_file))
+
+            from .replay import select_transport
+
+            if (config.model_replay == "replay") != (config.model.inference == "replay"):
+                raise RuntimeUnavailable("REPLAY_CONFIGURATION_MISMATCH")
+            self.broker = ModelBroker(config.model, select_transport(
+                config.model_replay, dev_mode=config.dev_mode, directory=config.replay_dir, live_factory=live_transport), self._core)
             self._reasons.pop("model_broker", None)
         except RuntimeUnavailable as error:
             self._reasons["model_broker"] = error.reason_code
@@ -462,8 +471,23 @@ class Runtime:
                 )
         try:
             return self.broker.generate(caller, payload)
+        except (Rejected, RuntimeUnavailable) as error:
+            allowed = {'MODEL_PROVIDER_TLS_ERROR', 'MODEL_PROVIDER_UNAUTHENTICATED',
+                       'MODEL_PROVIDER_FORBIDDEN', 'MODEL_PROVIDER_RATE_LIMITED',
+                       'MODEL_PROVIDER_REQUEST_REJECTED', 'MODEL_PROVIDER_UNAVAILABLE',
+                       'MODEL_PROVIDER_ERROR', 'MODEL_TIMEOUT', 'MODEL_RESPONSE_INCOMPLETE',
+                       'MODEL_RESPONSE_INVALID', 'BUDGET_EXHAUSTED'}
+            self.operations.append({'scan_id':grant.scan_id, 'assignment_id':grant.assignment_id,
+                'role':grant.record.role, 'event':'MODEL_FAILED',
+                'reason_code':error.reason_code if error.reason_code in allowed else 'MODEL_PROVIDER_ERROR'})
+            raise
         finally:
             grant.model_calls, grant.model_tokens = caller.calls, caller.tokens
+
+    def inspection_errors(self, scan_id):
+        # Bounded gateway-owned metadata; never provider response bodies or source content.
+        return [{'role':entry['role'], 'code':entry['reason_code']} for entry in list(self.operations)
+                if entry.get('scan_id') == scan_id and entry['event'] in {'MODEL_FAILED', 'INSPECTION_FAILED'}]
 
     def _http_tools(self, token: str | None, payload: dict) -> dict:
         grant = self._grants.authenticate(token, caps.KIND_TOOLS)

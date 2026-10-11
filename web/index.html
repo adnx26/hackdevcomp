@@ -8,12 +8,27 @@
   <script type="module" src="/ui/app.js"></script>
 </head>
 <body>
-  <header><a class="brand" href="/ui">Protection Gateway <span>v1</span></a><span id="identity">Connecting to your session…</span></header>
+  <header><a class="brand" href="/ui">Protection Gateway</a><span id="identity">Connecting to your session…</span></header>
   <main>
-    <section class="intro"><p class="eyebrow">INSPECT BEFORE USE</p><h1>Keep external content<br>within your task’s boundaries.</h1><p>Submit an email or text file, inspect its sources, and use the result under the selected policy. Content can provide information; it cannot grant permission.</p></section>
-    <aside class="coverage"><strong>Know the coverage</strong><p>This workflow covers supported inputs and tools in this application. Our native-chat connector covers its own content and tools. Native uploads, pasted text, built-in browsing, other connectors, and the native app’s final answer remain outside gateway enforcement.</p><p>Only plain text and bounded email MIME/HTML bodies are supported. Relevant attachments, PDFs, archives, images, and audio stay on hold. No real sending is enabled.</p></aside>
+    <section class="intro"><p class="eyebrow">PROMPT INJECTION SCANNER</p><h1>A closer look at your files.</h1><p>Drop files or a folder to check for suspicious instructions.</p></section>
     <p id="notice" class="notice" role="status" aria-live="polite">Checking the authenticated gateway session…</p>
     <form id="login-form" class="panel" hidden><label for="login-token">Local gateway login token</label><input id="login-token" type="password" autocomplete="off" required><p class="hint">Use the token in var/runtime/login-token. Your Kimi API key stays on the server.</p><button id="login-button">Sign in</button></form>
+    <section class="panel scanner" aria-label="File scanner">
+      <form id="folder-form">
+        <div id="drop-zone" class="drop-zone" tabindex="0" role="group" aria-label="Drop files or folders here, or press Enter to choose files">
+          <svg class="upload-icon" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M24 31V10m-8 8 8-8 8 8M10 30v8a3 3 0 0 0 3 3h22a3 3 0 0 0 3-3v-8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <h2>Drag &amp; drop your files here</h2><p>Include a whole folder. We’ll include its subfolders.</p>
+          <div class="picker-buttons"><button id="choose-files" class="secondary" type="button">Choose files</button><button id="choose-folder" class="secondary" type="button">Choose a folder</button></div>
+          <input id="scan-files" class="visually-hidden" type="file" multiple tabindex="-1" aria-label="Choose files for scanning">
+          <input id="folder-upload" class="visually-hidden" type="file" webkitdirectory multiple tabindex="-1" aria-label="Choose a folder for scanning">
+        </div>
+        <div id="selection" hidden><p id="selection-summary"></p><details><summary>View selected files</summary><ul id="selection-files"></ul></details></div>
+        <div class="scan-launch"><p class="hint">Up to 10 text or email files · 1 MiB each · 2 MiB total<br>Unsupported files are listed as uninspected.</p><button id="folder-button" disabled>Scan Now <span aria-hidden="true">→</span></button></div>
+      </form>
+      <section id="scan-progress" class="scan-progress" hidden aria-labelledby="progress-heading"><div class="progress-top"><h3 id="progress-heading">Preparing your files</h3><span id="progress-count"></span></div><progress id="scan-progress-bar" max="100" value="0" aria-label="Completed upload and inspection steps"></progress><p id="progress-description" role="status"></p><ul id="progress-files"></ul></section>
+    </section>
+    <section id="folder-report" class="panel results" hidden aria-labelledby="folder-heading"><p class="eyebrow">SCAN RESULTS</p><h2 id="folder-heading">Your file report</h2><p id="folder-summary" role="status"></p><ul id="folder-files"></ul><details class="scan-details"><summary>Scan details</summary><p id="folder-reference" class="hint"></p></details></section>
+    <details class="advanced"><summary>More options: task policies &amp; permitted results</summary>
     <div class="workspace">
       <section class="panel"><p class="eyebrow">01 / SELECT CONTENT</p><h2>A task with a defined scope</h2>
         <form id="upload-form"><label for="upload">Email (.eml) or plain text (.txt)</label><input id="upload" type="file" accept=".eml,.txt,text/plain,message/rfc822" required><p class="hint">Up to 1 MiB per source, 10 sources and 2 MiB per task. Uploads go to restricted storage before inspection.</p><button id="upload-button" disabled>Upload to gateway</button></form>
@@ -24,7 +39,9 @@
     </div>
     <section id="result-panel" class="panel" hidden><p class="eyebrow">03 / PERMITTED RESULT</p><h2>Inspected under the task’s policy</h2><p>This result remains untrusted and subject to its source, expiry, and disclosure restrictions. Source references and server-owned labels are retained below.</p><pre id="result"></pre><button id="chat-button" class="secondary">Open in controlled assistant</button><pre id="chat-result" hidden></pre></section>
     <section id="action-panel" class="panel" hidden><p class="eyebrow">SIMULATION ONLY</p><h2>Confirm an exact dummy action</h2><p>The gateway checks permissions separately from inspection. This records a simulated effect; it sends no email.</p><form id="action-form"><label for="recipient">Recipient selected by you</label><input id="recipient" type="email" autocomplete="off" required maxlength="254"><label for="subject">Subject</label><input id="subject" maxlength="998"><label for="body">Exact body</label><textarea id="body" rows="5" required maxlength="16000"></textarea><label for="attachment-ids">Authorized attachment IDs (comma separated, optional)</label><input id="attachment-ids" autocomplete="off" maxlength="1400"><button>Propose simulated action</button></form><div id="action-preview" hidden><h3>Exact action preview</h3><pre id="preview"></pre><p id="action-digest" class="hint"></p><label class="check"><input id="exact-approval" type="checkbox">I confirm this exact simulated recipient, body, attachments, and digest.</label><button id="confirm-action" disabled>Confirm and record simulated effect</button></div><p id="action-status" role="status"></p></section>
+    </details>
+    <details class="coverage"><summary>What this scanner covers</summary><p>This workflow covers supported inputs and tools in this application. Our native-chat connector covers its own content and tools. Native uploads, pasted text, built-in browsing, other connectors, and the native app’s final answer remain outside gateway enforcement.</p><p>Only plain text and bounded email MIME/HTML bodies are supported. Relevant attachments, PDFs, archives, images, and audio stay on hold. No real sending is enabled.</p></details>
     <dialog id="evidence-dialog" aria-labelledby="evidence-heading"><h2 id="evidence-heading">Supporting evidence</h2><p id="evidence-explainer">This record is separate from assistant context.</p><div id="evidence-summary"></div><details><summary>Technical evidence record</summary><pre id="evidence-text"></pre></details><div class="buttons"><button id="copy-evidence" class="secondary">Copy technical record</button><button id="close-evidence">Close</button></div></dialog>
-  </main><footer>External content supplies information. Your authenticated task and gateway policy control authority.</footer>
+  </main><footer>Prompt-injection checks for text and email. Findings need review; incomplete scans stay unconfirmed.</footer>
 </body>
 </html>

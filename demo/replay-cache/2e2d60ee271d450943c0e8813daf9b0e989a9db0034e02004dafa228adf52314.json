@@ -1,0 +1,27 @@
+{
+ "key_version": 1,
+ "model": {
+  "endpoint": "https://api.moonshot.ai/v1",
+  "max_output_tokens": 4096,
+  "model": "kimi-k3",
+  "provider": "kimi",
+  "reasoning_effort": "low"
+ },
+ "response": {
+  "answer": "Looking up the remittance account on file and Q3 payables summary.",
+  "tool_calls": [
+   {
+    "arguments": {
+     "path": "remittance_account.txt"
+    },
+    "operation": "read_file"
+   },
+   {
+    "arguments": {
+     "path": "q3_payables_summary.txt"
+    },
+    "operation": "read_file"
+   }
+  ]
+ }
+}

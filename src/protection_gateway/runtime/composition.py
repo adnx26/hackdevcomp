@@ -87,6 +87,12 @@ class CoreFacade:
     async def inspect_resource(self, context, request):
         return await self._call(context, self.service.inspect_resource, request["resource_id"], request["task_session_id"])
 
+    async def inspect_folder(self, context, request):
+        return await self._call(context, self.service.inspect_folder, request["folder_id"])
+
+    async def get_folder_status(self, context, request):
+        return await self._call(context, self.service.get_folder_status, request["folder_id"])
+
     async def get_scan_status(self, context, request):
         return await self._call(context, self.service.get_scan_status, request["scan_id"])
 
@@ -172,6 +178,8 @@ def attach_core(gateway, config):
                                model_configuration=config.model.binding() if config.model else {},
                                allow_unencrypted_dev_storage=True, cookie_secure=bool(config.tls_cert),
                                public_origin=config.allowed_origins[0],
+                               baseline_dir=str(config.baseline_dir),
+                               vendor_registry_path=str(config.vendor_registry) if config.vendor_registry else None,
                                limits=Limits(scan_deadline_seconds=300, worker_lease_seconds=150))
     service = GatewayService(core_config, runtime=bridge)
     bridge.service = service

@@ -1,0 +1,14 @@
+{
+  "name": "invoice-desk-scanner-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fictional invoice project for testing folder inspection",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test tests/totals.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

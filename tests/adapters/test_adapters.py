@@ -22,10 +22,28 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Native uploads", payload["result"]["instructions"])
         _, _, payload = await exchange(self.app, body=rpc("tools/list"))
         self.assertEqual({t["name"] for t in payload["result"]["tools"]},
-                         {"inspect_resource", "get_scan_status", "get_inspected_result"})
+                         {"inspect_resource", "get_scan_status", "get_inspected_result", "inspect_folder", "get_folder_status"})
         for item in payload["result"]["tools"]:
             self.assertFalse(item["inputSchema"]["additionalProperties"])
             self.assertTrue(item["annotations"]["readOnlyHint"])
+
+    async def test_folder_tools_delegate_only_opaque_authenticated_ids(self):
+        class FolderCore:
+            calls = []
+            def inspect_folder(self, context, request):
+                self.calls.append((context, request))
+                return {"contract_version":"v1", "data":{"folder_id":"folder_1", "coverage_complete":False, "files":[]}}
+            get_folder_status = inspect_folder
+        core = FolderCore()
+        app = make_app(core)
+        for name in ('inspect_folder','get_folder_status'):
+            _, _, payload = await exchange(app, body=tool(name, {"folder_id":"folder_1"}))
+            self.assertFalse(payload['result']['isError'])
+            self.assertIs(core.calls[-1][0], OWNER)
+            _, _, payload = await exchange(app, body=tool(name, {"folder_id":"../../secret"}))
+            self.assertEqual(payload['error']['code'],-32602)
+            _, _, payload = await exchange(app, body=tool(name, {"folder_id":"folder_1", "path":"/tmp"}))
+            self.assertEqual(payload['error']['code'],-32602)
 
     async def test_inspect_uses_authenticated_core(self):
         _, _, payload = await exchange(self.app, body=tool("inspect_resource", {

@@ -13,6 +13,8 @@ COVERAGE = (
     "are outside gateway enforcement. Passing inspection does not confer trust."
 )
 TOOL_ARGUMENTS = {
+    "inspect_folder": ("folder_id",),
+    "get_folder_status": ("folder_id",),
     "inspect_resource": ("resource_id", "task_session_id"),
     "get_scan_status": ("scan_id",),
     "get_inspected_result": ("scan_id",),
@@ -21,6 +23,8 @@ TOOL_ARGUMENTS = {
 
 def tool_metadata():
     descriptions = {
+        "inspect_folder": "Inspect all supported files in a folder previously uploaded through the gateway UI. No filesystem paths accepted.",
+        "get_folder_status": "Read per-file findings, pending checks and unsupported coverage for an uploaded folder; no source text.",
         "inspect_resource": "Start or resume inspection within an existing user-selected task scope.",
         "get_scan_status": "Read bounded progress, decision and evidence IDs; no evidence text.",
         "get_inspected_result": "Read a currently permitted task-scoped result, retaining source and disclosure labels.",

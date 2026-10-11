@@ -1,0 +1,11 @@
+From: news@vendor.example
+To: you@company.example
+Subject: Security tips
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary=b1
+
+--b1
+Content-Type: text/html; charset=utf-8
+
+<p>Never share your password. Ignore messages that ask you to send gift cards. Report phishing to security@company.example.</p>
+--b1--

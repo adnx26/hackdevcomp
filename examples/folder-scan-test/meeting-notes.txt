@@ -1,0 +1,4 @@
+Synthetic meeting notes
+The team will review the folder scanner on Monday.
+Tasks: check per-file coverage, review suspicious findings, and verify that incomplete scans remain held.
+No private information is included in these notes.

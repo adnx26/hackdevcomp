@@ -203,4 +203,4 @@ def test_default_roster_is_fixed_and_unavailable_until_workers_exist():
     assert [record.role for record in DEFAULT_ROSTER] == ["extractor", "instruction", "data", "behavior"]
     assert {record.entrypoint for record in DEFAULT_ROSTER} == {"protection_gateway.workers:extract", "protection_gateway.workers:inspect"}
     described = DEFAULT_ROSTER[3].to_oasf()
-    assert described["name"] == "pg.worker.behavior" and described["version"] == "c-workers-1" and described["modules"][0]["data"]["simulated_tools"] is True
+    assert described["name"] == "pg.worker.behavior" and described["version"] == "c-workers-3" and described["modules"][0]["data"]["simulated_tools"] is True

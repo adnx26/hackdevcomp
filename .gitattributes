@@ -1,0 +1,2 @@
+# Preserve published PoC payload bytes, including upstream trailing whitespace.
+tests/fixtures/public-poc/scan-folder/* whitespace=-blank-at-eol,-blank-at-eof
