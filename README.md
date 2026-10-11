@@ -299,10 +299,3 @@ make smoke
 This calls Kimi and uses API credits. It submits only the included synthetic invoice, injected instruction, and meeting text; it does not inspect your private documents or send email. Provider decisions can vary, and provider errors keep content held.
 
 For a complete pipeline description, test results, and repeatable browser steps, see [docs/testing.md](docs/testing.md).
-
-## Supported scope and limitations
-
-- Single-file uploads accept `.txt` and `.eml`; folder uploads also accept the text extensions listed above. Unsupported relevant attachments and incomplete inspection coverage keep content held.
-- This gateway protects only the workflow routed through this application. Native chat uploads, pasted text, browsing, other connectors, and a native app’s final response are outside this local gateway’s enforcement.
-- `make run` enables loopback-only development mode and local private storage. It is not a production deployment configuration.
-- The simulated action flow records a dummy effect only. Real email sending, payments, and external actions are not enabled.
