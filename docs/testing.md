@@ -107,7 +107,7 @@ cd /Users/advaithnair/Documents/GitHub/hackdevcomp
 make setup
 ```
 
-Python 3.11 or later is required. The default setup command uses `python3.12`;
+Python 3.11 or later is required. `make setup` picks the newest supported `python3.1x` on `PATH`;
 on another host use `make setup PYTHON=python3.11` or another supported Python.
 Your existing `.env` with `KIMI_API_KEY` is loaded automatically. Do not paste
 the key into the browser; it stays on the gateway. Optional settings are in

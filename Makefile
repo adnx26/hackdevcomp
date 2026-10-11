@@ -1,12 +1,17 @@
 # Repeatable developer commands (owned by teammate B). Uses the pinned environment in .venv.
 PY := .venv/bin/python
-PYTHON ?= python3.12
+# First supported interpreter on PATH (newest first). Override with PYTHON=/path/to/python3.12.
+PYTHON ?= $(shell for p in python3.13 python3.12 python3.11; do command -v $$p >/dev/null 2>&1 && echo $$p && break; done)
 PORT ?= 8766
+PYTHON_HELP := Install one with uv (uv python install 3.12) or pyenv (pyenv install 3.12), see README, then run: make setup PYTHON=/path/to/python3.12
 
 .PHONY: setup test test-isolation test-e2e smoke check run lock
 
 setup:
-	$(PYTHON) -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11 or later is required"'
+	@if [ -z "$(PYTHON)" ]; then echo "error: no Python 3.11 or later found on PATH. $(PYTHON_HELP)" >&2; exit 1; fi
+	@if ! command -v "$(PYTHON)" >/dev/null 2>&1; then echo "error: '$(PYTHON)' was not found. $(PYTHON_HELP)" >&2; exit 1; fi
+	@"$(PYTHON)" -c 'import sys; v = sys.version_info; sys.exit(0 if v >= (3, 11) else "error: $(PYTHON) is Python %d.%d; Python 3.11 or later is required. $(PYTHON_HELP)" % (v[0], v[1]))'
+	@echo "Using $(PYTHON) ($$("$(PYTHON)" -c 'import platform; print(platform.python_version())'))"
 	$(PYTHON) -m venv .venv
 	$(PY) -m pip install --require-hashes -r requirements.lock
 	$(PY) -m pip install --no-deps -e .

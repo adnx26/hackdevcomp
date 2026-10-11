@@ -7,7 +7,7 @@ The local development workflow uses Kimi K3 for live inspections. Email actions 
 ## Requirements
 
 - macOS with the system sandbox available, or another host where `make check` confirms the required isolation support.
-- Python 3.11 or later. The setup command defaults to Python 3.12.
+- Python 3.11 or later (3.12 recommended; pinned in `.python-version`). `make setup` uses the newest of `python3.13`, `python3.12` or `python3.11` on your `PATH` and stops with an error if none is available or the chosen interpreter is older than 3.11.
 - A Kimi API key for live document inspections. The unit and deterministic end-to-end test suites do not need a key.
 
 ## Set up the local app
@@ -18,10 +18,22 @@ From the repository root, create the pinned virtual environment and install the 
 make setup
 ```
 
-If Python 3.12 is not installed, choose an available supported version:
+To choose a specific interpreter, pass it explicitly:
 
 ```sh
 make setup PYTHON=python3.11
+```
+
+If you don't have Python 3.11 or later, install 3.12 with either tool. Both read the repository's `.python-version`:
+
+```sh
+# uv (https://docs.astral.sh/uv/)
+uv python install 3.12
+make setup PYTHON="$(uv python find 3.12)"
+
+# pyenv (https://github.com/pyenv/pyenv)
+pyenv install 3.12
+make setup PYTHON="$(pyenv which python)"
 ```
 
 Create a local environment file and add your Kimi API key. `.env` is ignored by Git; never commit or paste the key into the browser.
