@@ -88,6 +88,23 @@ def test_replay_mode_needs_a_cache_not_a_key(tmp_path):
     assert doctor.run(env, port=0, offline=False)[-1].ok
 
 
+def test_tls_check_reports_missing_ca_bundle_with_the_fix(monkeypatch):
+    import ssl
+
+    class Raw:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(doctor.socket, "create_connection", lambda *a, **k: Raw())
+
+    def refuse(self, sock, server_hostname=None):
+        raise ssl.SSLCertVerificationError("unable to get local issuer certificate")
+
+    monkeypatch.setattr(ssl.SSLContext, "wrap_socket", refuse)
+    result = doctor.check_tls()
+    assert not result.ok and "Install Certificates.command" in result.detail
+
+
 def test_missing_key_fails_broker_without_a_call():
     results = doctor.run({}, port=0, offline=False)
     assert not results[1].ok and not results[-1].ok and "API key" in results[-1].detail

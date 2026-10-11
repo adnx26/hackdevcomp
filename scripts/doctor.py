@@ -113,6 +113,25 @@ def check_slim(timeout: float = 10.0) -> Result:
     return Result("slim", True, f"loopback node on port {node.port}: point-to-point round trip OK")
 
 
+def check_tls(host: str = "api.moonshot.ai", timeout: float = 10.0) -> Result:
+    """Can this Python verify HTTPS certificates? python.org macOS builds ship
+    without a CA bundle until 'Install Certificates.command' is run."""
+    import ssl
+
+    context = ssl.create_default_context()
+    try:
+        with socket.create_connection((host, 443), timeout=timeout) as raw, context.wrap_socket(raw, server_hostname=host):
+            pass
+    except ssl.SSLCertVerificationError:
+        fix = f"run '/Applications/Python {sys.version_info.major}.{sys.version_info.minor}/Install Certificates.command'"
+        if sys.platform == "darwin" and Path("/etc/ssl/cert.pem").exists():
+            fix += " or prefix commands with SSL_CERT_FILE=/etc/ssl/cert.pem"
+        return Result("tls trust", False, f"Python cannot verify HTTPS certificates ({fix})")
+    except OSError as error:
+        return Result("tls trust", False, f"cannot reach {host}:443 ({type(error).__name__})")
+    return Result("tls trust", True, f"verified HTTPS certificate for {host}")
+
+
 def check_sandbox() -> Result:
     from protection_gateway.runtime.config import find_shadictl
     from protection_gateway.runtime.isolation import BACKEND_SEATBELT, default_backend
@@ -187,6 +206,11 @@ def run(env: Mapping[str, str], *, port: int, offline: bool, transport_factory: 
     elif not results[1].ok and transport_factory is None:
         results.append(Result("model broker", False, "skipped: API key check failed"))
     else:
+        if transport_factory is None:
+            results.append(check_tls())
+            if not results[-1].ok:
+                results.append(Result("model broker", False, "skipped: fix TLS trust first"))
+                return results
         results.append(check_model_broker(env, transport_factory))
     return results
 
